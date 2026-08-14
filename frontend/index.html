@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChessMind ♟️ 国际象棋多 Agent 分析</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>♟️ ChessMind</h1>
+    <span class="subtitle">多 Agent 国际象棋分析系统</span>
+  </header>
+
+  <div class="main">
+    <!-- 左侧棋盘 -->
+    <div class="board-section">
+      <div id="board"></div>
+      <div class="board-controls">
+        <button id="btn-new-game">新对局</button>
+        <button id="btn-flip">翻转棋盘</button>
+        <span id="game-status">白方先行</span>
+      </div>
+    </div>
+
+    <!-- 右侧分析面板 -->
+    <div class="analysis-section">
+      <!-- 胜率条 -->
+      <div class="eval-bar-container">
+        <div class="eval-bar">
+          <div class="eval-white" id="eval-white" style="height:50%"></div>
+          <div class="eval-black" id="eval-black" style="height:50%"></div>
+        </div>
+        <div class="eval-text">
+          <span id="white-prob">50%</span>
+          <span id="black-prob">50%</span>
+        </div>
+      </div>
+
+      <!-- 走子分类 -->
+      <div id="move-class" class="move-class">等待对局开始…</div>
+
+      <!-- 标签切换 -->
+      <div class="tabs">
+        <button class="tab active" data-tab="summary">综述</button>
+        <button class="tab" data-tab="tactical">战术</button>
+        <button class="tab" data-tab="strategic">战略</button>
+        <button class="tab" data-tab="pattern">开局</button>
+      </div>
+
+      <!-- 分析内容 -->
+      <div class="tab-content active" id="tab-summary">
+        <p class="placeholder">走一步棋来看看多 Agent 怎么说～</p>
+      </div>
+      <div class="tab-content" id="tab-tactical">
+        <p class="placeholder">战术分析将在这里显示</p>
+      </div>
+      <div class="tab-content" id="tab-strategic">
+        <p class="placeholder">战略分析将在这里显示</p>
+      </div>
+      <div class="tab-content" id="tab-pattern">
+        <p class="placeholder">开局分析将在这里显示</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- PGN 导入 -->
+  <div class="pgn-section">
+    <details>
+      <summary>📋 PGN 导入分析</summary>
+      <textarea id="pgn-input" placeholder="在这里粘贴 PGN 文本…"></textarea>
+      <button id="btn-analyze-pgn">分析 PGN</button>
+      <div id="pgn-result"></div>
+    </details>
+  </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
