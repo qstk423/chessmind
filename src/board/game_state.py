@@ -4,6 +4,14 @@ import chess.pgn
 from dataclasses import dataclass, field
 from datetime import datetime
 
+# 和棋原因的中文说明（不含将杀）
+DRAW_REASONS = {
+    chess.Termination.STALEMATE: "逼和",
+    chess.Termination.INSUFFICIENT_MATERIAL: "子力不足",
+    chess.Termination.SEVENTYFIVE_MOVES: "75回合规则",
+    chess.Termination.FIVEFOLD_REPETITION: "五次重复局面",
+}
+
 
 @dataclass
 class MoveRecord:
@@ -22,11 +30,14 @@ class MoveRecord:
 class GameState:
     """管理一盘棋的完整生命周期"""
 
-    def __init__(self):
-        self.board = chess.Board()
+    def __init__(self, board: chess.Board | None = None):
+        # 支持自定义初始局面（PGN 复盘带 FEN 头时使用）
+        self.initial = board.copy() if board is not None else chess.Board()
+        self.board = self.initial.copy()
         self.move_history: list[MoveRecord] = []
         self.move_count = 0
-        self.result: str | None = None
+        self.result: str | None = None        # 展示用中文结果
+        self.result_pgn: str = "*"            # PGN 标准结果标记（1-0/0-1/1/2-1/2/*）
 
     @property
     def fen(self) -> str:
@@ -49,13 +60,14 @@ class GameState:
                 return None
 
             fen_before = self.board.fen()
+            san = self.board.san(move)  # 必须在 push 之前生成 SAN
             self.board.push(move)
             fen_after = self.board.fen()
             self.move_count += 1
 
             record = MoveRecord(
                 move_number=self.move_count,
-                san=self.board.san(move),
+                san=san,
                 uci=uci,
                 fen_before=fen_before,
                 fen_after=fen_after,
@@ -70,34 +82,38 @@ class GameState:
             return None
 
     def _check_game_over(self):
-        if self.board.is_checkmate():
-            winner = "黑方" if self.board.turn == chess.WHITE else "白方"
+        """基于 board.outcome() 判定终局，覆盖将杀/逼和/子力不足/75回合/五次重复"""
+        outcome = self.board.outcome()
+        if outcome is None:
+            return
+        if outcome.termination == chess.Termination.CHECKMATE:
+            winner = "白方" if outcome.winner == chess.WHITE else "黑方"
             self.result = f"{winner}将杀获胜"
-        elif self.board.is_stalemate():
-            self.result = "逼和"
-        elif self.board.is_insufficient_material():
-            self.result = "子力不足，和棋"
+        else:
+            reason = DRAW_REASONS.get(outcome.termination, "和棋")
+            self.result = f"和棋（{reason}）"
+        self.result_pgn = outcome.result()
 
     def get_recent_moves(self, n: int = 10) -> list[str]:
         """获取最近 n 步的 SAN 记谱文本"""
         return [r.san for r in self.move_history[-n:]]
 
     def to_pgn(self) -> str:
-        """导出整局 PGN 文本"""
+        """导出整局 PGN 文本（Result 头使用 PGN 标准标记）"""
         game = chess.pgn.Game()
+        if self.initial.fen() != chess.STARTING_FEN:
+            game.setup(self.initial)
         node = game
-        board_copy = chess.Board()
         for record in self.move_history:
-            move = chess.Move.from_uci(record.uci)
-            node = node.add_variation(move)
-            board_copy.push(move)
-        game.headers["Result"] = self.result or "*"
+            node = node.add_variation(chess.Move.from_uci(record.uci))
+        game.headers["Result"] = self.result_pgn
         game.headers["Date"] = datetime.now().strftime("%Y.%m.%d")
         return str(game)
 
     def reset(self):
-        """重置棋局"""
-        self.board = chess.Board()
+        """重置棋局（回到初始局面）"""
+        self.board = self.initial.copy()
         self.move_history = []
         self.move_count = 0
         self.result = None
+        self.result_pgn = "*"

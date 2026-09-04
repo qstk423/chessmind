@@ -1,10 +1,26 @@
 """ChessMind 入口——启动 FastAPI 服务"""
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from src.api.routes import router
-import os
 
-app = FastAPI(title="ChessMind", description="国际象棋多 Agent 分析系统")
+from src.api.routes import orchestrator, router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动时连接 Stockfish 引擎，退出时关闭"""
+    await orchestrator.connect()
+    yield
+    orchestrator.close()
+
+
+app = FastAPI(
+    title="ChessMind",
+    description="国际象棋多 Agent 分析系统",
+    lifespan=lifespan,
+)
 
 # API 路由
 app.include_router(router, prefix="/api")
@@ -17,7 +33,8 @@ if os.path.exists(frontend_path):
 
 def main():
     import uvicorn
-    uvicorn.run("src.main:app", host="0.0.0.0", port=8000, reload=True)
+    # 只监听本机；需要局域网访问时自行改为 0.0.0.0 并注意无鉴权风险
+    uvicorn.run("src.main:app", host="127.0.0.1", port=8000)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,17 @@
 """FastAPI 路由——对弈模式 + PGN 分析模式"""
+from io import StringIO
+
+import chess.pgn
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from src.board.game_state import GameState
 from src.orchestrator import ChessMindOrchestrator
 
 router = APIRouter()
 orchestrator = ChessMindOrchestrator()
+
+# 引擎的启动/关闭由 main.py 的 lifespan 管理
 
 
 class MoveRequest(BaseModel):
@@ -13,25 +20,6 @@ class MoveRequest(BaseModel):
 
 class PGNRequest(BaseModel):
     pgn: str
-
-
-class GameResponse(BaseModel):
-    fen: str
-    move_count: int
-    is_game_over: bool
-    result: str | None
-    legal_moves: list[str]
-    pgn: str
-
-
-@router.on_event("startup")
-async def startup():
-    await orchestrator.connect()
-
-
-@router.on_event("shutdown")
-def shutdown():
-    orchestrator.close()
 
 
 # ── 对弈模式 ──
@@ -64,24 +52,20 @@ def get_state():
 async def analyze_pgn(req: PGNRequest):
     """
     导入 PGN 文本并逐步复盘分析。
-    返回每一步的分析结果列表。
+    使用独立 GameState 重放，不覆盖当前对局。
     """
-    import chess.pgn
-    from io import StringIO
+    game = chess.pgn.read_game(StringIO(req.pgn))
+    if game is None or not list(game.mainline_moves()):
+        raise HTTPException(status_code=400, detail="无法从 PGN 文本中解析出走法")
 
-    pgn_io = StringIO(req.pgn)
-    game = chess.pgn.read_game(pgn_io)
-    if game is None:
-        raise HTTPException(status_code=400, detail="无法解析 PGN 文本")
-
-    orchestrator.new_game()
-    board = game.board()
+    # 独立棋局（含 FEN 头的自定义起始局面），不影响主对局
+    replay = GameState(board=game.board())
     results = []
-
     for move in game.mainline_moves():
-        uci = move.uci()
-        analysis = await orchestrator.make_move(uci)
-        if analysis:
-            results.append(analysis)
+        analysis = await orchestrator.analyze_move(replay, move.uci())
+        if not analysis or "error" in analysis:
+            # PGN 与重放棋局不一致，后续走法已无意义
+            break
+        results.append(analysis)
 
     return {"total_moves": len(results), "moves": results}

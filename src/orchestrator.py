@@ -1,9 +1,11 @@
 """多 Agent 编排器：并行调用三个 Agent，汇总输出"""
 import asyncio
+import chess
 from openai import AsyncOpenAI
-from src.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from src.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, LLM_ENABLED
 from src.board.game_state import GameState
 from src.board.move_evaluator import MoveEvaluator
+from src.board.position_features import describe_position
 from src.agents.tactical import TacticalAgent
 from src.agents.strategic import StrategicAgent
 from src.agents.pattern import PatternAgent
@@ -18,10 +20,11 @@ class ChessMindOrchestrator:
         self.evaluator = MoveEvaluator()
         self._connected = False
 
-        # 初始化 LLM 客户端
-        self.llm_client = AsyncOpenAI(
-            api_key=LLM_API_KEY,
-            base_url=LLM_BASE_URL,
+        # 初始化 LLM 客户端（未配置 API Key 时降级为纯引擎模式）
+        self.llm_client = (
+            AsyncOpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+            if LLM_ENABLED
+            else None
         )
 
         # 初始化 Agent
@@ -46,44 +49,58 @@ class ChessMindOrchestrator:
         self.game.reset()
 
     async def make_move(self, uci: str) -> dict | None:
+        """在当前对局上走一步棋并返回完整分析"""
+        return await self.analyze_move(self.game, uci)
+
+    async def analyze_move(self, game: GameState, uci: str) -> dict | None:
         """
-        执行一步走子，返回完整的分析结果。
+        在指定棋局上执行一步走子，返回完整的分析结果。
+        PGN 复盘传入独立 GameState，不影响主对局。
 
         流程：
         1. 走子前 Stockfish 评估
         2. 执行走子
         3. 走子后 Stockfish 评估
-        4. 走子分类
-        5. 三个 Agent 并行分析
-        6. 汇总输出
+        4. 走子分类（走子方视角）
+        5. 提取结构化局面特征（接地上下文）
+        6. 三个 Agent 并行分析
+        7. 汇总输出
         """
-        legal = self.game.legal_moves()
+        legal = game.legal_moves()
         if uci not in legal:
             return {"error": "非法走法", "legal_moves": legal}
 
+        mover_is_white = game.board.turn == chess.WHITE
+
         # 走前评估
-        eval_before = self.evaluator.evaluate(self.game.fen)
+        eval_before = await self.evaluator.evaluate(game.fen)
 
         # 执行走子
-        record = self.game.push_move(uci)
+        record = game.push_move(uci)
         if record is None:
             return {"error": "走子执行失败"}
 
         # 走后评估
-        eval_after = self.evaluator.evaluate(self.game.fen)
-        move_class = self.evaluator.classify_move(eval_before, eval_after)
+        eval_after = await self.evaluator.evaluate(game.fen)
+        move_class = self.evaluator.classify_move(
+            eval_before, eval_after, mover_is_white
+        )
 
         # 更新记录
         record.eval_before = eval_before["score_cp"]
         record.eval_after = eval_after["score_cp"]
         record.eval_delta = eval_after["score_cp"] - eval_before["score_cp"]
 
+        # 结构化局面信息（子力/悬子/兵形/王安全/中心/线路 + 引擎评估）
+        # 作为接地上下文注入各 Agent，让分析基于确定事实而非 LLM 猜测 FEN
+        grounding = describe_position(game.board, eval_after)
+        history = game.get_recent_moves(10)
+
         # 并行调用三个 Agent
-        history = self.game.get_recent_moves(10)
         tac, strat, pat = await asyncio.gather(
-            self.tactical.analyze(self.game.fen, history),
-            self.strategic.analyze(self.game.fen, history),
-            self.pattern.analyze(self.game.fen, history),
+            self.tactical.analyze(game.fen, history, grounding),
+            self.strategic.analyze(game.fen, history, grounding),
+            self.pattern.analyze(game.fen, history, grounding),
         )
 
         # 汇总
@@ -93,7 +110,8 @@ class ChessMindOrchestrator:
             pattern=pat,
             stockfish_info=eval_after,
             move_class=move_class,
-            fen=self.game.fen,
+            fen=game.fen,
+            grounding=grounding,
         )
 
         return {
@@ -114,10 +132,10 @@ class ChessMindOrchestrator:
                 "pattern": pat,
                 "summary": summary,
             },
-            "game_over": self.game.is_game_over,
-            "result": self.game.result,
-            "fen": self.game.fen,
-            "legal_moves": self.game.legal_moves(),
+            "game_over": game.is_game_over,
+            "result": game.result,
+            "fen": game.fen,
+            "legal_moves": game.legal_moves(),
         }
 
     def get_state(self) -> dict:

@@ -1,9 +1,15 @@
 """战术分析 Agent——检测吃子、牵制、闪击、杀棋等战术主题"""
 from src.agents.base_agent import BaseAgent
 
-TACTICAL_PROMPT = """你是一位国际象棋战术分析师。你的任务：
+TACTICAL_PROMPT = """你是一位国际象棋战术分析师。你将收到：
+1. 当前局面的 FEN 与最近走法历史
+2. python-chess 提取的结构化局面信息（棋子位置、悬子、将军等确定性事实）
+3. Stockfish 引擎评估与最佳续着（PV）
 
-逐一检查棋盘上是否存在以下战术主题：
+结构化信息和引擎评估是程序计算的可信事实，必须以此为准，禁止凭记忆猜测棋盘内容。
+
+你的任务：
+逐一核查以下战术主题：
 - 棋子被直接攻击（悬子）
 - 牵制（Pin）
 - 闪击（Discovered Attack）
