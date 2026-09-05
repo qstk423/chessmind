@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=pitch1">
+<link rel="stylesheet" href="style.css?v=play4">
 </head>
 <body>
 <div class="app-shell">
@@ -23,7 +23,7 @@
     <div class="topbar-meta">
       <span id="llm-status" class="pill">模型：检测中…</span>
       <span id="game-status" class="pill pill-soft">白方先行</span>
-      <button id="btn-pitch-demo" class="accent topbar-cta" type="button">路演 Demo</button>
+      <button id="btn-pitch-demo" class="ghost topbar-cta" type="button" title="高争议局面演示">路演</button>
     </div>
   </header>
 
@@ -43,21 +43,26 @@
         <button id="btn-new-game" type="button">新对局</button>
         <button id="btn-flip" type="button">翻转</button>
         <button id="btn-ai-step" class="accent" type="button">AI 一步</button>
-        <button id="btn-auto" class="accent" type="button">自动对战</button>
+        <button id="btn-auto" type="button">自动对战</button>
         <button id="btn-pause" type="button" disabled>暂停</button>
         <button id="btn-review" type="button">复盘</button>
       </div>
-      <p id="ai-meta" class="ai-meta">等待开局…</p>
+      <p id="ai-meta" class="ai-meta">人 vs AI · 走棋后看 Council 怎么吵</p>
     </section>
 
     <aside class="council-panel">
+      <div id="coach-takeaway" class="coach-takeaway" hidden>
+        <span class="takeaway-kicker">本步记住</span>
+        <p id="coach-takeaway-text" class="takeaway-text"></p>
+      </div>
+
       <div class="eval-row">
         <div class="eval-bar">
           <div class="eval-white" id="eval-white" style="height:50%"></div>
           <div class="eval-black" id="eval-black" style="height:50%"></div>
         </div>
         <div class="eval-copy">
-          <div id="move-class" class="move-class">等待对局开始…</div>
+          <div id="move-class" class="move-class">你走一步，理事会就开会</div>
           <div class="eval-text">
             <span id="white-prob">白方 50%</span>
             <span id="black-prob">黑方 50%</span>
@@ -67,11 +72,27 @@
 
       <div id="disagreement-panel" class="disagreement-panel">
         <div class="dg-head">
-          <span class="dg-title">AI 争议度</span>
-          <span id="dg-label" class="dg-label">等待分析…</span>
+          <span class="dg-title">三位分析师</span>
+          <span id="dg-label" class="dg-label">等待你的着法…</span>
         </div>
         <div class="dg-bar"><div id="dg-fill" class="dg-fill" style="width:0%"></div></div>
-        <div id="dg-moves" class="dg-moves"></div>
+        <div id="dg-compare" class="dg-compare" aria-live="polite">
+          <div class="dg-card" data-role="tactical">
+            <span class="dg-role">战术</span>
+            <span class="dg-move" id="dg-move-tactical">—</span>
+            <span class="dg-state" id="dg-state-tactical">待命</span>
+          </div>
+          <div class="dg-card" data-role="strategic">
+            <span class="dg-role">战略</span>
+            <span class="dg-move" id="dg-move-strategic">—</span>
+            <span class="dg-state" id="dg-state-strategic">待命</span>
+          </div>
+          <div class="dg-card" data-role="risk">
+            <span class="dg-role">风险</span>
+            <span class="dg-move" id="dg-move-risk">—</span>
+            <span class="dg-state" id="dg-state-risk">待命</span>
+          </div>
+        </div>
       </div>
 
       <div class="tabs" role="tablist">
@@ -83,39 +104,40 @@
       </div>
 
       <div class="tab-content active" id="tab-summary">
-        <p class="placeholder">走棋后，教练会把 Council 结论翻译成你的水平语言。</p>
+        <p class="placeholder">默认人 vs AI。走棋后，教练只提炼「这一步该记住的一件事」。</p>
       </div>
       <div class="tab-content" id="tab-tactical">
-        <p class="placeholder">战术分析师意见</p>
+        <p class="placeholder">战术分析师：短线战术与强制变化</p>
       </div>
       <div class="tab-content" id="tab-strategic">
-        <p class="placeholder">战略分析师意见</p>
+        <p class="placeholder">战略分析师：局面结构与长远计划</p>
       </div>
       <div class="tab-content" id="tab-risk">
-        <p class="placeholder">风险审查员意见</p>
+        <p class="placeholder">风险审查员：陷阱、王安全与过激着</p>
       </div>
       <div class="tab-content" id="tab-debate">
-        <p class="placeholder">高争议时自动触发质询与仲裁</p>
+        <p class="placeholder">三方分歧大时，自动质询并由引擎参与仲裁</p>
       </div>
     </aside>
   </div>
 
   <nav class="workspace-nav" aria-label="功能分区">
-    <button type="button" class="ws-tab active" data-panel="play">对弈设置</button>
-    <button type="button" class="ws-tab" data-panel="learn">名局残局</button>
-    <button type="button" class="ws-tab" data-panel="online">联机</button>
-    <button type="button" class="ws-tab" data-panel="more">更多工具</button>
+    <button type="button" class="ws-tab active" data-panel="play" aria-selected="true">对弈</button>
+    <button type="button" class="ws-tab" data-panel="learn" aria-selected="false">名局残局</button>
+    <button type="button" class="ws-tab" data-panel="online" aria-selected="false">联机</button>
+    <button type="button" class="ws-tab" data-panel="more" aria-selected="false">更多</button>
   </nav>
 
   <section class="workspace">
     <div class="ws-panel" id="panel-play" data-panel="play">
+      <p class="panel-lead">主路径：人 vs AI，走一步看 Council 怎么吵、教练怎么讲</p>
       <div class="toolbar">
         <label class="field">
           <span>模式</span>
           <select id="game-mode">
+            <option value="human_vs_ai" selected>人 vs AI</option>
             <option value="human_vs_human">人人分析</option>
-            <option value="human_vs_ai">人 vs AI</option>
-            <option value="ai_vs_ai" selected>AI vs AI</option>
+            <option value="ai_vs_ai">AI vs AI</option>
           </select>
         </label>
         <label class="field">
@@ -313,6 +335,6 @@
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=pitch1"></script>
+<script src="app.js?v=play4"></script>
 </body>
 </html>

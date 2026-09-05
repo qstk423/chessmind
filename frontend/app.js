@@ -48,7 +48,15 @@ const PIECE_GLYPH = {
   '': '空',
 };
 
-function setProgress(msg) {
+const COUNCIL_STAGES = [
+  '战术分析师出牌…',
+  '战略分析师出牌…',
+  '风险审查员挑刺…',
+  '比对分歧…',
+  '教练翻译结论…',
+];
+
+function setProgress(msg, { cycleCouncil = false } = {}) {
   if (!msg) {
     $('#council-progress').prop('hidden', true);
     if (progressTimer) {
@@ -58,14 +66,72 @@ function setProgress(msg) {
     return;
   }
   const started = Date.now();
+  let stageIdx = 0;
   $('#council-progress').prop('hidden', false);
   const tick = () => {
     const s = Math.round((Date.now() - started) / 1000);
-    $('#council-progress-text').text(`${msg}（${s}s）`);
+    if (cycleCouncil) {
+      stageIdx = Math.min(COUNCIL_STAGES.length - 1, Math.floor(s / 2));
+      $('#council-progress-text').text(`${COUNCIL_STAGES[stageIdx]}（${s}s）`);
+      markAgentThinking(stageIdx);
+    } else {
+      $('#council-progress-text').text(`${msg}（${s}s）`);
+    }
   };
   tick();
   if (progressTimer) clearInterval(progressTimer);
-  progressTimer = setInterval(tick, 1000);
+  progressTimer = setInterval(tick, 500);
+}
+
+function markAgentThinking(stageIdx) {
+  const roles = ['tactical', 'strategic', 'risk'];
+  roles.forEach((role, i) => {
+    const card = $(`.dg-card[data-role="${role}"]`);
+    card.removeClass('is-thinking is-ready is-dissent is-agree');
+    if (i < stageIdx) {
+      card.addClass('is-ready');
+      $(`#dg-state-${role}`).text('已发言');
+    } else if (i === stageIdx && stageIdx < 3) {
+      card.addClass('is-thinking');
+      $(`#dg-state-${role}`).text('思考中…');
+      $(`#dg-move-${role}`).text('…');
+    } else if (stageIdx < 3) {
+      $(`#dg-state-${role}`).text('排队');
+    }
+  });
+}
+
+function firstSentence(text) {
+  if (!text) return '';
+  const cleaned = String(text).replace(/\s+/g, ' ').trim();
+  const m = cleaned.match(/^(.+?[。！？.!?]|.+$)/);
+  const s = (m ? m[1] : cleaned).trim();
+  return s.length > 90 ? `${s.slice(0, 88)}…` : s;
+}
+
+function showCoachTakeaway(council) {
+  const coach = council?.agents?.coach;
+  const verdict = council?.verdict;
+  const line =
+    firstSentence(coach?.summary) ||
+    firstSentence(verdict?.summary) ||
+    (verdict?.recommended_move ? `理事会倾向 ${verdict.recommended_move}` : '');
+  if (!line) {
+    $('#coach-takeaway').prop('hidden', true);
+    return;
+  }
+  $('#coach-takeaway-text').text(line);
+  $('#coach-takeaway').prop('hidden', false);
+}
+
+function resetAgentCompare() {
+  ['tactical', 'strategic', 'risk'].forEach((role) => {
+    const card = $(`.dg-card[data-role="${role}"]`);
+    card.removeClass('is-thinking is-ready is-dissent is-agree');
+    $(`#dg-move-${role}`).text('—');
+    $(`#dg-state-${role}`).text('待命');
+  });
+  $('#coach-takeaway').prop('hidden', true);
 }
 
 function initBoard() {
@@ -164,6 +230,8 @@ async function submitHumanMove(uci) {
       return;
     }
 
+    const useCouncil = $('#with-analysis').is(':checked');
+    if (useCouncil) setProgress('Council 开会中', { cycleCouncil: true });
     const r = await fetch(`${API}/game/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -179,11 +247,12 @@ async function submitHumanMove(uci) {
     applyMoveResult(data);
     if (!data.game_over && data.next_controller && data.next_controller !== 'human') {
       await sleep(400);
-      await runAiStep();
+      await runAiStep({ nested: true });
     }
   } catch (err) {
     console.error('分析请求失败:', err);
   } finally {
+    setProgress(null);
     busy = false;
   }
 }
@@ -501,16 +570,92 @@ function renderDebate(council) {
 function updateDisagreement(council) {
   if (!council || !council.disagreement) {
     $('#dg-fill').css('width', '0%');
-    $('#dg-label').text('等待分析…');
-    $('#dg-moves').text('');
+    $('#dg-label').text('等待你的着法…');
+    resetAgentCompare();
     return;
   }
   const dg = council.disagreement;
   const pct = Math.round((dg.disagreement_score || 0) * 100);
   $('#dg-fill').css('width', pct + '%');
-  $('#dg-label').text(`${dg.badge || ''} · 争议度 ${pct}% · ${dg.label || ''}`);
+  const debateOn = !!(council.debate && council.debate.triggered);
+  $('#dg-label').text(
+    `${dg.badge || ''} · 争议 ${pct}%` + (debateOn ? ' · 已开辩论' : '')
+  );
+
   const rm = dg.recommended_moves || {};
-  $('#dg-moves').text(`⚔️${rm.tactical || '—'}  🧠${rm.strategic || '—'}  🛡️${rm.risk || '—'}`);
+  const moves = {
+    tactical: rm.tactical || council.agents?.tactical?.recommended_move || '—',
+    strategic: rm.strategic || council.agents?.strategic?.recommended_move || '—',
+    risk: rm.risk || council.agents?.risk?.recommended_move || '—',
+  };
+  const unique = new Set(Object.values(moves).filter((m) => m && m !== '—'));
+  const dissent = unique.size > 1;
+
+  Object.entries(moves).forEach(([role, move]) => {
+    const card = $(`.dg-card[data-role="${role}"]`);
+    card.removeClass('is-thinking is-ready is-dissent is-agree');
+    $(`#dg-move-${role}`).text(move);
+    if (dissent && move !== '—') {
+      const agreesWithMost =
+        [...unique].filter((m) => Object.values(moves).filter((x) => x === m).length >= 2)[0];
+      if (agreesWithMost && move === agreesWithMost) {
+        card.addClass('is-agree');
+        $(`#dg-state-${role}`).text('多数意见');
+      } else {
+        card.addClass('is-dissent');
+        $(`#dg-state-${role}`).text('唱反调');
+      }
+    } else {
+      card.addClass('is-ready');
+      $(`#dg-state-${role}`).text(move === '—' ? '无推荐' : '一致');
+    }
+  });
+}
+
+let revealTimers = [];
+
+function clearRevealTimers() {
+  revealTimers.forEach((t) => clearTimeout(t));
+  revealTimers = [];
+}
+
+function revealCouncilTabs(council) {
+  clearRevealTimers();
+  const sequence = [
+    ['tactical', () => $('#tab-tactical').html(renderOpinion(council.agents.tactical, '战术'))],
+    ['strategic', () => $('#tab-strategic').html(renderOpinion(council.agents.strategic, '战略'))],
+    ['risk', () => $('#tab-risk').html(renderOpinion(council.agents.risk, '风险'))],
+    ['debate', () => $('#tab-debate').html(renderDebate(council))],
+    ['summary', () => {
+      $('#tab-summary').html(renderOpinion(council.agents.coach, '教练'));
+      showCoachTakeaway(council);
+      // 有辩论时自动切到辩论 Tab 一眼看见吵架
+      if (council.debate?.triggered) {
+        $('.tab').removeClass('active');
+        $('.tab-content').removeClass('active');
+        $('.tab[data-tab="debate"]').addClass('active');
+        $('#tab-debate').addClass('active is-revealing');
+      } else {
+        $('.tab').removeClass('active');
+        $('.tab-content').removeClass('active');
+        $('.tab[data-tab="summary"]').addClass('active');
+        $('#tab-summary').addClass('active is-revealing');
+      }
+    }],
+  ];
+
+  $('#tab-tactical, #tab-strategic, #tab-risk, #tab-debate, #tab-summary').html(
+    '<p class="placeholder">Council 正在入座…</p>'
+  );
+
+  sequence.forEach(([tab, fn], i) => {
+    revealTimers.push(setTimeout(() => {
+      fn();
+      const el = $(`#tab-${tab}`);
+      el.addClass('is-revealing');
+      setTimeout(() => el.removeClass('is-revealing'), 450);
+    }, 180 + i * 220));
+  });
 }
 
 function updateAnalysis(data) {
@@ -541,12 +686,10 @@ function updateAnalysis(data) {
   updateDisagreement(council);
 
   if (council && council.agents) {
-    $('#tab-summary').html(renderOpinion(council.agents.coach, '教练'));
-    $('#tab-tactical').html(renderOpinion(council.agents.tactical, '战术'));
-    $('#tab-strategic').html(renderOpinion(council.agents.strategic, '战略'));
-    $('#tab-risk').html(renderOpinion(council.agents.risk, '风险'));
-    $('#tab-debate').html(renderDebate(council));
+    revealCouncilTabs(council);
   } else {
+    clearRevealTimers();
+    $('#coach-takeaway').prop('hidden', true);
     $('#tab-summary').html(formatText(a.summary));
     $('#tab-tactical').html(formatText(a.tactical));
     $('#tab-strategic').html(formatText(a.strategic));
@@ -578,8 +721,21 @@ function updateStatus() {
 
 function refreshModeControls() {
   const mode = $('#game-mode').val();
+  const humanField = $('#human-color').closest('.field');
+  const whiteAiField = $('#white-ai').closest('.field');
   $('#human-color').prop('disabled', mode !== 'human_vs_ai');
   $('#white-ai').prop('disabled', mode !== 'ai_vs_ai');
+  // PC 上隐藏无关控件，避免功能栏显得错乱
+  if (mode === 'human_vs_ai') {
+    humanField.removeAttr('hidden');
+    whiteAiField.attr('hidden', true);
+  } else if (mode === 'ai_vs_ai') {
+    humanField.attr('hidden', true);
+    whiteAiField.removeAttr('hidden');
+  } else {
+    humanField.attr('hidden', true);
+    whiteAiField.attr('hidden', true);
+  }
 }
 
 function newGamePayload() {
@@ -601,13 +757,15 @@ function resetPanels() {
   selectedSquare = null;
   clearLastMoveMarkers();
   clearHighlights();
-  $('#move-class').text('等待走棋…').attr('class', 'move-class');
+  clearRevealTimers();
+  resetAgentCompare();
+  $('#move-class').text('你走一步，理事会就开会').attr('class', 'move-class');
   $('#eval-white, #eval-black').css('height', '50%');
   $('#white-prob').text('白方 50%');
   $('#black-prob').text('黑方 50%');
   $('.tab-content').html('<p class="placeholder">对局进行中…</p>');
   $('#tab-summary').addClass('active');
-  $('#ai-meta').text('新对局已开始');
+  $('#ai-meta').text('人 vs AI · 走棋后看 Council 怎么吵');
   updateStatus();
 }
 
@@ -639,22 +797,23 @@ async function startNewGame() {
     resetPanels();
     // 人机且人类执黑，或 AI vs AI：需要 AI 先走 / 可自动
     if (state.mode === 'human_vs_ai' && state.controller && state.controller !== 'human') {
-      await runAiStep();
+      await runAiStep({ nested: true });
     }
   } finally {
     busy = false;
   }
 }
 
-async function runAiStep() {
-  if (busy && !autoPlay) return;
+async function runAiStep(opts = {}) {
+  const nested = !!opts.nested;
+  if (busy && !autoPlay && !nested) return;
   if (serverState.is_game_over) return;
   if (serverState.controller === 'human') return;
 
   busy = true;
   const useCouncil = $('#with-analysis').is(':checked');
   $('#game-status').text(useCouncil ? 'AI + Council…' : 'AI 思考中…');
-  if (useCouncil) setProgress('AI 走子与 Council 分析中');
+  if (useCouncil) setProgress('AI 走子与 Council 开会', { cycleCouncil: true });
   try {
     const r = await fetch(`${API}/game/ai-step`, {
       method: 'POST',
@@ -675,7 +834,7 @@ async function runAiStep() {
     stopAuto();
   } finally {
     setProgress(null);
-    busy = false;
+    if (!nested) busy = false;
   }
 }
 
@@ -781,7 +940,7 @@ async function runDemoById(demoId, title) {
   busy = true;
   stopAuto();
   $('#pitch-cue').prop('hidden', true);
-  setProgress(`路演 Council：${title || demoId}`);
+  setProgress(`路演 Council：${title || demoId}`, { cycleCouncil: true });
   $('#ai-meta').text(`加载 Demo：${title || demoId} …`);
   try {
     const r = await fetch(`${API}/demos/${encodeURIComponent(demoId)}/run`, { method: 'POST' });
@@ -853,14 +1012,29 @@ $('#btn-pitch-fast').click(async () => {
 });
 
 function switchWorkspace(panelId) {
-  $('.ws-tab').removeClass('active');
-  $(`.ws-tab[data-panel="${panelId}"]`).addClass('active');
-  $('.ws-panel').attr('hidden', true);
-  $(`#panel-${panelId}`).removeAttr('hidden');
+  $('.ws-tab').removeClass('active').attr('aria-selected', 'false');
+  $(`.ws-tab[data-panel="${panelId}"]`).addClass('active').attr('aria-selected', 'true');
+  $('.ws-panel').each(function () {
+    this.hidden = true;
+  });
+  const panel = document.getElementById(`panel-${panelId}`);
+  if (panel) panel.hidden = false;
+  // 棋盘占满首屏时，分区在折线下；不滚动会像「点不开」
+  const nav = document.querySelector('.workspace-nav');
+  const target = panel || nav;
+  if (target) {
+    requestAnimationFrame(() => {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+  if (panelId === 'learn') {
+    loadLibraryList();
+  }
 }
 
-$('.ws-tab').on('click', function () {
-  const panel = $(this).data('panel');
+$(document).on('click', '.ws-tab', function (e) {
+  e.preventDefault();
+  const panel = $(this).attr('data-panel') || $(this).data('panel');
   if (panel) switchWorkspace(panel);
 });
 
@@ -1449,7 +1623,7 @@ async function loadLibraryList() {
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       box.html(
-        `<div class="history-empty">学习库接口不可用（${r.status}）。请重启后端后再刷新页面。</div>`
+        `<div class="history-empty">学习库接口不可用（${r.status} · ${API}/library）。请打开 http://127.0.0.1:8000/ 并用最新后端，勿用旧端口。</div>`
       );
       return;
     }
