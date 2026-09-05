@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=lib1">
+<link rel="stylesheet" href="style.css?v=clean3">
 </head>
 <body>
 <div class="app-shell">
@@ -23,84 +23,13 @@
     <div class="topbar-meta">
       <span id="llm-status" class="pill">模型：检测中…</span>
       <span id="game-status" class="pill pill-soft">白方先行</span>
+      <button id="btn-pitch-demo" class="accent topbar-cta" type="button">路演 Demo</button>
     </div>
   </header>
 
-  <div class="pitch-bar" role="region" aria-label="路演快捷操作">
-    <div class="pitch-copy">
-      <strong>路演</strong>
-      <span>一键争议 Demo → 辩论 → 复盘；或快速 AI 对战（关 Council）</span>
-    </div>
-    <div class="pitch-actions">
-      <button id="btn-pitch-demo" class="accent" type="button">希腊赠礼 · 辩论</button>
-      <button id="btn-pitch-fast" type="button">快速 AI 对战</button>
-      <button id="btn-preview-finale" type="button">预览结算</button>
-      <button id="btn-show-logs" type="button">调用证明</button>
-    </div>
-    <div id="council-progress" class="council-progress" hidden>
-      <span class="spinner" aria-hidden="true"></span>
-      <span id="council-progress-text">Council 分析中…</span>
-    </div>
-  </div>
-
-  <div class="online-bar" id="online-bar">
-    <div class="online-copy">
-      <strong>联机对弈</strong>
-      <span id="online-status">本地模式 · 可开房间用手机互下</span>
-    </div>
-    <div class="online-controls">
-      <input id="online-name" class="online-input" type="text" maxlength="24" placeholder="昵称" value="玩家">
-      <button id="btn-room-create" class="accent" type="button">创建房间</button>
-      <input id="online-room-code" class="online-input code" type="text" maxlength="8" placeholder="房间码" autocomplete="off">
-      <button id="btn-room-join" type="button">加入</button>
-      <button id="btn-room-copy" type="button" hidden>复制链接</button>
-      <button id="btn-room-leave" type="button" hidden>退出联机</button>
-    </div>
-  </div>
-
-  <div class="toolbar">
-    <label class="field">
-      <span>模式</span>
-      <select id="game-mode">
-        <option value="human_vs_human">人人分析</option>
-        <option value="human_vs_ai">人 vs AI</option>
-        <option value="ai_vs_ai" selected>AI vs AI</option>
-      </select>
-    </label>
-    <label class="field">
-      <span>人类执</span>
-      <select id="human-color">
-        <option value="white">白</option>
-        <option value="black">黑</option>
-      </select>
-    </label>
-    <label class="field">
-      <span>白方 AI</span>
-      <select id="white-ai">
-        <option value="llm">LLM</option>
-        <option value="engine">Stockfish</option>
-      </select>
-    </label>
-    <label class="field">
-      <span>深度</span>
-      <select id="engine-depth">
-        <option value="8">8</option>
-        <option value="12" selected>12</option>
-        <option value="15">15</option>
-      </select>
-    </label>
-    <label class="field">
-      <span>教练</span>
-      <select id="coach-level">
-        <option value="beginner">入门</option>
-        <option value="intermediate" selected>中级</option>
-        <option value="advanced">高级</option>
-      </select>
-    </label>
-    <label class="field check">
-      <input type="checkbox" id="with-analysis" checked>
-      <span>Council</span>
-    </label>
+  <div id="council-progress" class="council-progress" hidden>
+    <span class="spinner" aria-hidden="true"></span>
+    <span id="council-progress-text">Council 分析中…</span>
   </div>
 
   <div class="stage">
@@ -169,70 +98,70 @@
     </aside>
   </div>
 
-  <section class="tools">
-    <details class="tool-block" open>
-      <summary>拍照识谱 · 映射到棋盘</summary>
-      <p class="tool-hint">拍实体棋盘或选相册照片，识别后可纠错再分析</p>
-      <div class="vision-panel">
-        <div class="vision-preview-wrap">
-          <img id="vision-preview" class="vision-preview" alt="预览" hidden>
-          <div id="vision-preview-empty" class="vision-preview-empty">尚未选择照片</div>
-        </div>
-        <div class="vision-controls">
-          <label class="vision-file-btn">
-            拍照 / 选图
-            <input type="file" id="vision-file" accept="image/*" capture="environment" hidden>
-          </label>
-          <label class="field inline">
-            <span>行棋方</span>
-            <select id="vision-side">
-              <option value="">自动</option>
-              <option value="w">白方</option>
-              <option value="b">黑方</option>
+  <nav class="workspace-nav" aria-label="功能分区">
+    <button type="button" class="ws-tab active" data-panel="play">对弈设置</button>
+    <button type="button" class="ws-tab" data-panel="learn">名局残局</button>
+    <button type="button" class="ws-tab" data-panel="online">联机</button>
+    <button type="button" class="ws-tab" data-panel="more">更多工具</button>
+  </nav>
+
+  <section class="workspace">
+    <div class="ws-panel" id="panel-play" data-panel="play">
+      <div class="toolbar">
+        <label class="field">
+          <span>模式</span>
+          <select id="game-mode">
+            <option value="human_vs_human">人人分析</option>
+            <option value="human_vs_ai">人 vs AI</option>
+            <option value="ai_vs_ai" selected>AI vs AI</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>人类执</span>
+          <select id="human-color">
+            <option value="white">白</option>
+            <option value="black">黑</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>白方 AI</span>
+          <select id="white-ai">
+            <option value="llm">LLM</option>
+            <option value="engine">Stockfish</option>
+          </select>
+        </label>
+        <label class="field check">
+          <input type="checkbox" id="with-analysis" checked>
+          <span>Council</span>
+        </label>
+      </div>
+      <details class="inline-advanced">
+        <summary>高级选项</summary>
+        <div class="toolbar compact">
+          <label class="field">
+            <span>深度</span>
+            <select id="engine-depth">
+              <option value="8">8</option>
+              <option value="12" selected>12</option>
+              <option value="15">15</option>
             </select>
           </label>
-          <label class="field check inline">
-            <input type="checkbox" id="vision-analyze">
-            <span>映射后直接分析</span>
-          </label>
-          <button id="btn-vision" class="accent" type="button">识别并映射</button>
-          <button id="btn-edit-fen" type="button">打开纠错</button>
-          <button id="btn-analyze-pos" type="button">仅分析当前局面</button>
-          <span id="vision-status" class="vision-status"></span>
-        </div>
-      </div>
-      <div id="fen-editor" class="fen-editor" hidden>
-        <p class="tool-hint">选棋子后点棋盘格子放置；点「空」再点格子清除。确认后写回服务器并可分析。</p>
-        <div id="piece-palette" class="piece-palette" role="listbox" aria-label="棋子调色板"></div>
-        <div class="fen-editor-row">
-          <label class="field inline">
-            <span>行棋方</span>
-            <select id="edit-turn">
-              <option value="w">白方</option>
-              <option value="b">黑方</option>
+          <label class="field">
+            <span>教练</span>
+            <select id="coach-level">
+              <option value="beginner">入门</option>
+              <option value="intermediate" selected>中级</option>
+              <option value="advanced">高级</option>
             </select>
           </label>
-          <button id="btn-apply-fen" class="accent" type="button">确认纠错</button>
-          <button id="btn-apply-analyze" type="button">确认并分析</button>
-          <button id="btn-cancel-edit" type="button">退出纠错</button>
+          <button id="btn-pitch-fast" type="button">快速 AI 对战</button>
+          <button id="btn-preview-finale" type="button">预览结算</button>
         </div>
-        <code id="edit-fen-preview" class="fen-preview"></code>
-      </div>
-    </details>
+      </details>
+    </div>
 
-    <details class="tool-block" open>
-      <summary>对局历史</summary>
-      <p class="tool-hint">走子自动写入本地 SQLite；可恢复局面或删除</p>
-      <div class="history-actions">
-        <button id="btn-save-game" type="button">保存当前对局</button>
-        <button id="btn-refresh-history" type="button">刷新列表</button>
-      </div>
-      <div id="history-list" class="history-list"></div>
-    </details>
-
-    <details class="tool-block" open>
-      <summary>名局 · 残局库</summary>
-      <p class="tool-hint">经典名谱跟练、残局自己下或 AI 代下、战术杀型体验</p>
+    <div class="ws-panel" id="panel-learn" data-panel="learn" hidden>
+      <p class="panel-lead">点卡片按钮：加载局面、演示名谱或 AI 代下</p>
       <div class="lib-filters" id="lib-filters">
         <button type="button" class="lib-filter active" data-cat="">全部</button>
         <button type="button" class="lib-filter" data-cat="game">名局</button>
@@ -241,41 +170,118 @@
       </div>
       <div class="lib-actions">
         <button id="btn-lib-step" type="button" disabled>名谱下一步</button>
-        <button id="btn-lib-auto" class="accent" type="button" disabled>自动演示名谱</button>
-        <button id="btn-lib-ai" type="button" disabled>AI 代下此局</button>
-        <button id="btn-lib-stop" type="button" disabled>停止演示</button>
+        <button id="btn-lib-auto" class="accent" type="button" disabled>自动演示</button>
+        <button id="btn-lib-ai" type="button" disabled>AI 代下</button>
+        <button id="btn-lib-stop" type="button" disabled>停止</button>
       </div>
       <p id="lib-status" class="tool-hint"></p>
       <div id="library-list" class="library-list"></div>
-    </details>
+    </div>
 
-    <details class="tool-block" open>
-      <summary>路演 Demo</summary>
-      <p class="tool-hint">一键加载高争议局面并跑 Council</p>
-      <div id="demo-buttons" class="demo-buttons"></div>
-    </details>
-
-    <details class="tool-block">
-      <summary>PGN 导入</summary>
-      <textarea id="pgn-input" placeholder="粘贴 PGN…"></textarea>
-      <button id="btn-analyze-pgn" type="button">分析 PGN</button>
-      <div id="pgn-result"></div>
-    </details>
-
-    <details class="tool-block" id="logs-section">
-      <summary>调用证明 · LLM 日志</summary>
-      <p class="tool-hint">大赛提交用：展示模型名、Agent、耗时与 Token（同源 logs/llm_calls.jsonl）</p>
-      <div class="history-actions">
-        <button id="btn-refresh-logs" type="button">刷新日志</button>
-        <button id="btn-ping-llm" type="button">Ping 模型</button>
+    <div class="ws-panel" id="panel-online" data-panel="online" hidden>
+      <div class="online-bar bare" id="online-bar">
+        <div class="online-copy">
+          <strong>联机对弈</strong>
+          <span id="online-status">同一 Wi‑Fi 下，创建房间并把链接发给对手</span>
+        </div>
+        <div class="online-controls">
+          <input id="online-name" class="online-input" type="text" maxlength="24" placeholder="昵称" value="玩家">
+          <button id="btn-room-create" class="accent" type="button">创建房间</button>
+          <input id="online-room-code" class="online-input code" type="text" maxlength="8" placeholder="房间码" autocomplete="off">
+          <button id="btn-room-join" type="button">加入</button>
+          <button id="btn-room-copy" type="button" hidden>复制链接</button>
+          <button id="btn-room-leave" type="button" hidden>退出联机</button>
+        </div>
       </div>
-      <div id="logs-list" class="logs-list"></div>
-    </details>
+    </div>
 
-    <details class="tool-block" id="review-section" style="display:none" open>
-      <summary>赛后复盘</summary>
-      <div id="review-result"></div>
-    </details>
+    <div class="ws-panel" id="panel-more" data-panel="more" hidden>
+      <details class="tool-block">
+        <summary>拍照识谱</summary>
+        <p class="tool-hint">拍实体棋盘，识别后可纠错再分析</p>
+        <div class="vision-panel">
+          <div class="vision-preview-wrap">
+            <img id="vision-preview" class="vision-preview" alt="预览" hidden>
+            <div id="vision-preview-empty" class="vision-preview-empty">尚未选择照片</div>
+          </div>
+          <div class="vision-controls">
+            <label class="vision-file-btn">
+              拍照 / 选图
+              <input type="file" id="vision-file" accept="image/*" capture="environment" hidden>
+            </label>
+            <label class="field inline">
+              <span>行棋方</span>
+              <select id="vision-side">
+                <option value="">自动</option>
+                <option value="w">白方</option>
+                <option value="b">黑方</option>
+              </select>
+            </label>
+            <label class="field check inline">
+              <input type="checkbox" id="vision-analyze">
+              <span>映射后直接分析</span>
+            </label>
+            <button id="btn-vision" class="accent" type="button">识别并映射</button>
+            <button id="btn-edit-fen" type="button">打开纠错</button>
+            <button id="btn-analyze-pos" type="button">仅分析当前局面</button>
+            <span id="vision-status" class="vision-status"></span>
+          </div>
+        </div>
+        <div id="fen-editor" class="fen-editor" hidden>
+          <p class="tool-hint">选棋子后点棋盘格子放置；点「空」再点格子清除。</p>
+          <div id="piece-palette" class="piece-palette" role="listbox" aria-label="棋子调色板"></div>
+          <div class="fen-editor-row">
+            <label class="field inline">
+              <span>行棋方</span>
+              <select id="edit-turn">
+                <option value="w">白方</option>
+                <option value="b">黑方</option>
+              </select>
+            </label>
+            <button id="btn-apply-fen" class="accent" type="button">确认纠错</button>
+            <button id="btn-apply-analyze" type="button">确认并分析</button>
+            <button id="btn-cancel-edit" type="button">退出纠错</button>
+          </div>
+          <code id="edit-fen-preview" class="fen-preview"></code>
+        </div>
+      </details>
+
+      <details class="tool-block">
+        <summary>对局历史</summary>
+        <div class="history-actions">
+          <button id="btn-save-game" type="button">保存当前对局</button>
+          <button id="btn-refresh-history" type="button">刷新列表</button>
+        </div>
+        <div id="history-list" class="history-list"></div>
+      </details>
+
+      <details class="tool-block">
+        <summary>路演局面</summary>
+        <div id="demo-buttons" class="demo-buttons"></div>
+      </details>
+
+      <details class="tool-block">
+        <summary>PGN 导入</summary>
+        <textarea id="pgn-input" placeholder="粘贴 PGN…"></textarea>
+        <button id="btn-analyze-pgn" type="button">分析 PGN</button>
+        <div id="pgn-result"></div>
+      </details>
+
+      <details class="tool-block" id="logs-section">
+        <summary>调用证明</summary>
+        <div class="history-actions">
+          <button id="btn-refresh-logs" type="button">刷新日志</button>
+          <button id="btn-ping-llm" type="button">Ping 模型</button>
+          <button id="btn-show-logs" type="button">展开本区</button>
+        </div>
+        <div id="logs-list" class="logs-list"></div>
+      </details>
+
+      <details class="tool-block" id="review-section" style="display:none" open>
+        <summary>赛后复盘</summary>
+        <div id="review-result"></div>
+      </details>
+    </div>
   </section>
 </div>
 
@@ -305,6 +311,6 @@
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=lib1"></script>
+<script src="app.js?v=clean3"></script>
 </body>
 </html>

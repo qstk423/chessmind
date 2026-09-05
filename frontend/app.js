@@ -745,7 +745,10 @@ $('#btn-review').click(async () => {
     const debates = (data.debates || []).map(d =>
       `<li>第${escapeHtml(String(d.number))}步 ${escapeHtml(d.san)} → 仲裁 ${escapeHtml(d.verdict || '—')}</li>`
     ).join('');
+    switchWorkspace('more');
     $('#review-section').show();
+    const reviewEl = document.getElementById('review-section');
+    if (reviewEl) reviewEl.open = true;
     $('#review-result').html(`
       <div class="review-block">
         <p><strong>${escapeHtml(data.title || '复盘')}</strong> · 共 ${data.total_moves} 步 · 辩论 ${data.debate_count || 0} 次 · 平均争议 ${Math.round((data.avg_disagreement || 0) * 100)}%</p>
@@ -754,7 +757,7 @@ $('#btn-review').click(async () => {
         <p><strong>辩论回合</strong></p><ul>${debates || '<li>本局未触发辩论</li>'}</ul>
         <pre style="white-space:pre-wrap;font-size:0.78rem;opacity:0.8">${escapeHtml(data.pgn || '')}</pre>
       </div>`);
-    document.getElementById('review-section').scrollIntoView({ behavior: 'smooth' });
+    reviewEl?.scrollIntoView({ behavior: 'smooth' });
   } catch (e) {
     alert('复盘请求失败');
   }
@@ -831,7 +834,20 @@ $('#btn-pitch-fast').click(async () => {
   startAuto();
 });
 
+function switchWorkspace(panelId) {
+  $('.ws-tab').removeClass('active');
+  $(`.ws-tab[data-panel="${panelId}"]`).addClass('active');
+  $('.ws-panel').attr('hidden', true);
+  $(`#panel-${panelId}`).removeAttr('hidden');
+}
+
+$('.ws-tab').on('click', function () {
+  const panel = $(this).data('panel');
+  if (panel) switchWorkspace(panel);
+});
+
 $('#btn-show-logs').click(() => {
+  switchWorkspace('more');
   const el = document.getElementById('logs-section');
   if (el) {
     el.open = true;
@@ -1411,7 +1427,14 @@ async function loadLibraryList() {
   const qs = libraryFilter ? `?category=${encodeURIComponent(libraryFilter)}` : '';
   const box = $('#library-list');
   try {
-    const data = await fetch(`${API}/library${qs}`).then((r) => r.json());
+    const r = await fetch(`${API}/library${qs}`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      box.html(
+        `<div class="history-empty">学习库接口不可用（${r.status}）。请重启后端后再刷新页面。</div>`
+      );
+      return;
+    }
     const items = data.items || [];
     if (!items.length) {
       box.html('<div class="history-empty">暂无条目</div>');
@@ -1419,38 +1442,46 @@ async function loadLibraryList() {
     }
     box.empty();
     items.forEach((it) => {
-      const el = $('<div class="lib-item"></div>');
-      el.append(`<h4>${escapeHtml(it.title)}</h4>`);
+      const el = $('<article class="lib-item"></article>');
       el.append(
-        `<div class="meta">${escapeHtml(it.category_label || it.category)}` +
-          (it.year ? ` · ${it.year}` : '') +
-          (it.players ? ` · ${escapeHtml(it.players)}` : '') +
-          (it.has_script ? ` · ${it.move_count} 步名谱` : ' · 局面体验') +
+        `<div class="lib-item-top">` +
+          `<div class="lib-item-title">${escapeHtml(it.title)}</div>` +
+          `<span class="lib-item-badge">${escapeHtml(it.category_label || it.category)}</span>` +
           `</div>`
       );
-      el.append(`<div class="blurb">${escapeHtml(it.blurb || '')}</div>`);
+      el.append(
+        `<div class="meta">` +
+          (it.year ? `${it.year} · ` : '') +
+          (it.players ? `${escapeHtml(it.players)} · ` : '') +
+          (it.has_script ? `${it.move_count} 步名谱` : '局面体验') +
+          (it.goal ? ` · 目标：${escapeHtml(it.goal)}` : '') +
+          `</div>`
+      );
+      if (it.blurb) {
+        el.append(`<div class="blurb">${escapeHtml(it.blurb)}</div>`);
+      }
       const row = $('<div class="row"></div>');
       row.append(
-        $('<button type="button">加载体验</button>').on('click', () =>
-          loadLibraryItem(it.id, { mode: 'human_vs_human' })
-        )
+        $('<button type="button">加载</button>').on('click', () => {
+          loadLibraryItem(it.id, { mode: 'human_vs_human' });
+        })
       );
       if (it.has_script) {
         row.append(
-          $('<button type="button" class="accent">演示名谱</button>').on('click', async () => {
+          $('<button type="button" class="accent">演示</button>').on('click', async () => {
             await loadLibraryItem(it.id, { mode: 'human_vs_human' });
             startLibraryAuto();
           })
         );
       }
       row.append(
-        $('<button type="button">AI 代下</button>').on('click', () =>
-          loadLibraryItem(it.id, { forAi: true })
-        )
+        $('<button type="button">AI 代下</button>').on('click', () => {
+          loadLibraryItem(it.id, { forAi: true });
+        })
       );
       if (it.tags && it.tags.includes('debate')) {
         row.append(
-          $('<button type="button">Council 分析</button>').on('click', async () => {
+          $('<button type="button">Council</button>').on('click', async () => {
             await loadLibraryItem(it.id, { mode: 'human_vs_human' });
             $('#btn-analyze-pos').click();
           })
@@ -1459,15 +1490,16 @@ async function loadLibraryList() {
       el.append(row);
       box.append(el);
     });
-  } catch (_) {
-    box.html('<div class="history-empty">学习库加载失败</div>');
+  } catch (err) {
+    console.error(err);
+    box.html('<div class="history-empty">学习库加载失败，请确认服务已重启到最新代码</div>');
   }
 }
 
 $('.lib-filter').click(function () {
   $('.lib-filter').removeClass('active');
   $(this).addClass('active');
-  libraryFilter = $(this).data('cat') || '';
+  libraryFilter = $(this).attr('data-cat') || '';
   loadLibraryList();
 });
 $('#btn-lib-step').click(() => libraryStepOnce());
