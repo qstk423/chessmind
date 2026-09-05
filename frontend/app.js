@@ -14,6 +14,7 @@ let autoPlay = false;
 let autoTimer = null;
 let busy = false;
 const STEP_DELAY_MS = 1200;
+const FAST_STEP_DELAY_MS = 450;
 /** 上一步起终点（JJ 象棋风格：起点留白点） */
 let lastMoveFrom = null;
 let lastMoveTo = null;
@@ -21,6 +22,8 @@ let lastMoveTo = null;
 let editMode = false;
 let editPiece = ''; // '' = erase, else KQRBNPkqrbnp
 let editBoard = null; // Chess instance while editing
+let autoDelayMs = STEP_DELAY_MS;
+let progressTimer = null;
 
 const PIECE_GLYPH = {
   K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '♙',
@@ -28,12 +31,32 @@ const PIECE_GLYPH = {
   '': '空',
 };
 
+function setProgress(msg) {
+  if (!msg) {
+    $('#council-progress').prop('hidden', true);
+    if (progressTimer) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+    }
+    return;
+  }
+  const started = Date.now();
+  $('#council-progress').prop('hidden', false);
+  const tick = () => {
+    const s = Math.round((Date.now() - started) / 1000);
+    $('#council-progress-text').text(`${msg}（${s}s）`);
+  };
+  tick();
+  if (progressTimer) clearInterval(progressTimer);
+  progressTimer = setInterval(tick, 1000);
+}
+
 function initBoard() {
   board = Chessboard('board', {
     position: 'start',
     orientation: orientation,
     draggable: false,
-    pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
+    pieceTheme: 'vendor/pieces/{piece}.png',
   });
 
   $('#board').on('click', '.square-55d63', function () {
@@ -359,12 +382,13 @@ function updateDisagreement(council) {
 function updateAnalysis(data) {
   if (data.error) return;
 
-  const e = data.evaluation;
+  const e = data.evaluation || {};
   const a = data.analysis || {};
   const council = a.council;
+  const after = e.after || {};
 
-  const wp = Math.round(e.after.win_prob_white * 100);
-  const bp = Math.round(e.after.win_prob_black * 100);
+  const wp = Math.round((after.win_prob_white != null ? after.win_prob_white : 0.5) * 100);
+  const bp = Math.round((after.win_prob_black != null ? after.win_prob_black : 0.5) * 100);
   $('#eval-white').css('height', wp + '%');
   $('#eval-black').css('height', bp + '%');
   $('#white-prob').text(`白方 ${wp}%`);
@@ -373,10 +397,12 @@ function updateAnalysis(data) {
   const clsLabels = {
     brilliant: '✨ 妙手！', great: '👍 好棋', good: '✓ 正常',
     inaccuracy: '🤔 缓着', mistake: '⚠️ 漏着', blunder: '💀 大漏',
+    position: '📍 局面',
   };
+  const cls = e.classification || 'good';
   $('#move-class')
-    .text(clsLabels[e.classification] || e.classification)
-    .attr('class', 'move-class ' + e.classification);
+    .text(clsLabels[cls] || cls)
+    .attr('class', 'move-class ' + cls);
 
   updateDisagreement(council);
 
@@ -472,7 +498,9 @@ async function runAiStep() {
   if (serverState.controller === 'human') return;
 
   busy = true;
-  $('#game-status').text('AI 思考中…');
+  const useCouncil = $('#with-analysis').is(':checked');
+  $('#game-status').text(useCouncil ? 'AI + Council…' : 'AI 思考中…');
+  if (useCouncil) setProgress('AI 走子与 Council 分析中');
   try {
     const r = await fetch(`${API}/game/ai-step`, {
       method: 'POST',
@@ -492,6 +520,7 @@ async function runAiStep() {
     console.error(err);
     stopAuto();
   } finally {
+    setProgress(null);
     busy = false;
   }
 }
@@ -523,7 +552,7 @@ function scheduleAuto() {
     } else {
       stopAuto();
     }
-  }, STEP_DELAY_MS);
+  }, autoDelayMs);
 }
 
 function startAuto() {
@@ -531,6 +560,7 @@ function startAuto() {
     alert('请先选择「AI vs AI」或「人 vs AI」模式并开新对局');
     return;
   }
+  autoDelayMs = $('#with-analysis').is(':checked') ? STEP_DELAY_MS : FAST_STEP_DELAY_MS;
   autoPlay = true;
   $('#btn-auto').text('对战中…').prop('disabled', true);
   $('#btn-pause').prop('disabled', false);
@@ -576,50 +606,55 @@ $('#btn-review').click(async () => {
   }
 });
 
+async function runDemoById(demoId, title) {
+  if (busy) return;
+  busy = true;
+  stopAuto();
+  setProgress(`路演 Council：${title || demoId}`);
+  $('#ai-meta').text(`加载 Demo：${title || demoId} …`);
+  try {
+    const r = await fetch(`${API}/demos/${encodeURIComponent(demoId)}/run`, { method: 'POST' });
+    const payload = await r.json();
+    if (!r.ok) {
+      alert('Demo 失败：' + JSON.stringify(payload.detail || payload));
+      return;
+    }
+    const state = payload.state || {};
+    applyServerState(state);
+    clearLastMoveMarkers();
+    game.load(state.fen);
+    board.position(state.fen, false);
+    selectedSquare = null;
+    clearHighlights();
+    updateStatus();
+    if (payload.analysis) {
+      applyMoveResult({
+        ...payload.analysis,
+        move: { san: '局面分析', uci: '', number: 0 },
+        game_over: payload.analysis.game_over,
+        result: payload.analysis.result,
+      });
+      $('#ai-meta').text(`Demo「${title || demoId}」Council 完成 · 可点复盘`);
+      if (payload.analysis.analysis?.council?.debate?.triggered) {
+        $('.tab').removeClass('active');
+        $('.tab-content').removeClass('active');
+        $('.tab[data-tab="debate"]').addClass('active');
+        $('#tab-debate').addClass('active');
+      }
+    }
+  } finally {
+    setProgress(null);
+    busy = false;
+  }
+}
+
 async function loadDemos() {
   try {
     const data = await fetch(`${API}/demos`).then(r => r.json());
     const box = $('#demo-buttons').empty();
     (data.demos || []).forEach(d => {
       const btn = $(`<button type="button" title="${escapeHtml(d.blurb)}">${escapeHtml(d.title)}</button>`);
-      btn.click(async () => {
-        if (busy) return;
-        busy = true;
-        stopAuto();
-        $('#ai-meta').text(`加载 Demo：${d.title} …`);
-        try {
-          const r = await fetch(`${API}/demos/${encodeURIComponent(d.id)}/run`, { method: 'POST' });
-          const payload = await r.json();
-          if (!r.ok) {
-            alert('Demo 失败：' + JSON.stringify(payload.detail || payload));
-            return;
-          }
-          const state = payload.state || {};
-          applyServerState(state);
-          game.load(state.fen);
-          board.position(state.fen, false);
-          selectedSquare = null;
-          clearHighlights();
-          updateStatus();
-          if (payload.analysis) {
-            applyMoveResult({
-              ...payload.analysis,
-              move: { san: '局面分析', uci: '', number: 0 },
-              game_over: payload.analysis.game_over,
-              result: payload.analysis.result,
-            });
-            $('#ai-meta').text(`Demo「${d.title}」Council 完成`);
-            if (payload.analysis.analysis?.council?.debate?.triggered) {
-              $('.tab').removeClass('active');
-              $('.tab-content').removeClass('active');
-              $('.tab[data-tab="debate"]').addClass('active');
-              $('#tab-debate').addClass('active');
-            }
-          }
-        } finally {
-          busy = false;
-        }
-      });
+      btn.click(() => runDemoById(d.id, d.title));
       box.append(btn);
     });
   } catch (e) {
@@ -627,9 +662,84 @@ async function loadDemos() {
   }
 }
 
+$('#btn-pitch-demo').click(() => runDemoById('greek_gift', '希腊赠礼（攻王弃象）'));
+
+$('#btn-pitch-fast').click(async () => {
+  if (busy) return;
+  stopAuto();
+  $('#game-mode').val('ai_vs_ai');
+  $('#with-analysis').prop('checked', false);
+  $('#engine-depth').val('8');
+  autoDelayMs = FAST_STEP_DELAY_MS;
+  refreshModeControls();
+  await startNewGame();
+  $('#ai-meta').text('快速对战：Council 已关 · 深度 8');
+  startAuto();
+});
+
+$('#btn-show-logs').click(() => {
+  const el = document.getElementById('logs-section');
+  if (el) {
+    el.open = true;
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  refreshLogs();
+});
+
+async function refreshLogs() {
+  const box = $('#logs-list');
+  try {
+    const data = await fetch(`${API}/logs/recent?limit=15`).then((r) => r.json());
+    const logs = data.logs || [];
+    if (!logs.length) {
+      box.html('<div class="history-empty">尚无调用记录（跑一次 Demo 后刷新）</div>');
+      return;
+    }
+    box.empty();
+    logs.slice().reverse().forEach((row) => {
+      const ok = row.success !== false;
+      const item = $('<div class="log-item"></div>');
+      item.html(
+        `<div><strong>${escapeHtml(row.agent || '?')}</strong> · ${escapeHtml(row.model || '')}` +
+          ` <span class="meta">${ok ? 'OK' : 'FAIL'} · ${Math.round(row.latency_ms || 0)}ms` +
+          (row.total_tokens != null || row.usage?.total_tokens != null
+            ? ` · ${row.total_tokens ?? row.usage.total_tokens} tok`
+            : '') +
+          `</span></div>` +
+          `<div class="meta">${escapeHtml((row.ts || row.timestamp || '').toString().slice(0, 19))}` +
+          (row.error ? ` · ${escapeHtml(String(row.error).slice(0, 80))}` : '') +
+          `</div>`
+      );
+      box.append(item);
+    });
+  } catch (_) {
+    box.html('<div class="history-empty">日志加载失败</div>');
+  }
+}
+
+$('#btn-refresh-logs').click(() => refreshLogs());
+$('#btn-ping-llm').click(async () => {
+  setProgress('Ping LLM…');
+  try {
+    const h = await fetch(`${API}/health?ping_llm=true`).then((r) => r.json());
+    $('#llm-status').text(
+      `模型：${h.llm_model || '?'} · ping ${h.llm_ping || '?'} · 引擎${h.stockfish ? '就绪' : '降级'}`
+    );
+    $('#ai-meta').text(
+      h.llm_ping === 'ok'
+        ? `LLM ping OK · ${h.llm_latency_ms || '?'}ms`
+        : `LLM ping：${h.llm_ping || 'fail'} ${h.llm_error || ''}`
+    );
+    refreshLogs();
+  } finally {
+    setProgress(null);
+  }
+});
+
 $('#btn-analyze-pos').click(async () => {
   if (busy) return;
   busy = true;
+  setProgress('分析当前局面…');
   $('#ai-meta').text('正在分析当前局面…');
   try {
     const r = await fetch(`${API}/game/analyze-position`, {
@@ -648,6 +758,7 @@ $('#btn-analyze-pos').click(async () => {
     });
     $('#ai-meta').text('当前局面 Council 完成');
   } finally {
+    setProgress(null);
     busy = false;
   }
 });
@@ -1020,8 +1131,11 @@ $(document).ready(async () => {
   try {
     const h = await fetch(`${API}/health`).then(r => r.json());
     $('#llm-status').text(
-      `模型：${h.llm_model || '?'} · ${h.llm_enabled ? '已启用' : '未配置 Key'} · 引擎${h.stockfish ? '就绪' : '未连接'}`
+      `模型：${h.llm_model || '?'} · ${h.llm_enabled ? '已启用' : '未配置 Key'} · 引擎${h.stockfish ? '就绪' : '降级'}`
     );
+    if (!h.stockfish && h.stockfish_error) {
+      $('#ai-meta').text('Stockfish 未连接（已降级）：' + h.stockfish_error);
+    }
   } catch (_) {
     $('#llm-status').text('无法连接后端 /api/health');
   }

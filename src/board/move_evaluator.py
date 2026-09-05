@@ -12,6 +12,7 @@ class MoveEvaluator:
         self.depth = depth
         self.time_limit = time_limit
         self._engine: chess.engine.SimpleEngine | None = None
+        self._connect_error: str | None = None
         # SimpleEngine 非线程安全，用锁把引擎访问串行化
         self._lock = asyncio.Lock()
 
@@ -22,24 +23,49 @@ class MoveEvaluator:
         return self._engine
 
     async def connect(self):
-        """异步启动引擎"""
-        self._engine = await asyncio.to_thread(
-            chess.engine.SimpleEngine.popen_uci, STOCKFISH_PATH
-        )
+        """异步启动引擎；失败时不抛出，允许无引擎降级启动。"""
+        try:
+            self._engine = await asyncio.to_thread(
+                chess.engine.SimpleEngine.popen_uci, STOCKFISH_PATH
+            )
+            return True
+        except Exception as e:
+            self._engine = None
+            self._connect_error = f"{type(e).__name__}: {e}"
+            return False
 
     def close(self):
         """关闭引擎"""
         if self._engine:
-            self._engine.quit()
+            try:
+                self._engine.quit()
+            except Exception:
+                pass
             self._engine = None
+
+    @property
+    def available(self) -> bool:
+        return self._engine is not None
 
     async def evaluate(self, fen: str, depth: int | None = None) -> dict:
         """在线程池中执行同步引擎分析，避免阻塞事件循环"""
+        if self._engine is None:
+            return {
+                "score_cp": 0,
+                "win_prob_white": 0.5,
+                "win_prob_black": 0.5,
+                "pv": [],
+                "mate_in": None,
+                "is_mate": False,
+                "engine_unavailable": True,
+            }
         async with self._lock:
             return await asyncio.to_thread(self._evaluate_sync, fen, depth)
 
     async def best_move(self, fen: str, depth: int | None = None) -> str | None:
         """返回引擎最佳着法 UCI；终局或无着法时返回 None。"""
+        if self._engine is None:
+            return None
         async with self._lock:
             return await asyncio.to_thread(self._best_move_sync, fen, depth)
 
@@ -62,6 +88,17 @@ class MoveEvaluator:
         - mate_in: 距离将杀步数（None 表示暂无杀棋；0 表示已将杀）
         - is_mate: 是否为将杀分数
         """
+        if self._engine is None:
+            return {
+                "score_cp": 0,
+                "win_prob_white": 0.5,
+                "win_prob_black": 0.5,
+                "pv": [],
+                "mate_in": None,
+                "is_mate": False,
+                "engine_unavailable": True,
+            }
+
         board = chess.Board(fen)
 
         # 终局已将杀的局面：直接给出确定性结论（引擎对 mate 0 的符号约定有歧义）

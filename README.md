@@ -16,8 +16,10 @@
 - **赛后复盘**：争议步、辩论次数、叙事与 PGN
 - **多模态识谱**：棋盘截图 → FEN，支持格子纠错后再分析
 - **对局历史**：SQLite 持久化，可恢复局面
+- **路演快捷栏**：一键希腊赠礼 / 快速 AI 对战 / 调用证明
+- **离线前端资源**：jQuery / chessboard / 棋子图本地 vendor，弱网可演示
 - **调用日志**：`logs/llm_calls.jsonl`，便于大赛提交调用证明
-- **无 Key 降级**：仍可引擎对弈与评分；LLM 相关能力跳过或回退
+- **无 Key / 无引擎降级**：仍可打开 UI；LLM 与 Stockfish 缺失时软降级
 - **Docker**：`docker compose up` 一键部署（镜像内含 Stockfish）
 
 ## 工作原理

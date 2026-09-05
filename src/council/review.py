@@ -73,9 +73,15 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
     )[:8]
 
     narrative = [
-        f"本局共 {len(move_records)} 步，结果：{game_result or '进行中/未知'}。",
+        f"本局共 {len(move_records)} 步/局面分析，结果：{game_result or '进行中/未知'}。",
         f"平均 AI 争议度 {round(avg_dg * 100)}%；触发辩论 {len(debates)} 次。",
     ]
+    pos_only = [r for r in move_records if r.get("position_only") or (r.get("move") or {}).get("san") == "局面分析"]
+    if pos_only:
+        narrative.insert(
+            1,
+            f"含 {len(pos_only)} 次局面级 Council（路演 Demo / 识谱分析）。",
+        )
     if counts.get("brilliant") or counts.get("great"):
         narrative.append(
             f"亮点着法：妙手 {counts.get('brilliant', 0)}、好棋 {counts.get('great', 0)}。"
@@ -86,8 +92,11 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
         )
     if debates:
         d0 = debates[0]
+        label = f"第 {d0.get('number')} 步 {d0.get('san')}" if d0.get("san") not in (None, "局面分析") else "局面分析"
+        if d0.get("san") == "局面分析":
+            label = "局面分析"
         narrative.append(
-            f"最高戏剧性辩论出现在第 {d0.get('number')} 步 {d0.get('san')}，"
+            f"最高戏剧性辩论出现在 {label}，"
             f"仲裁推荐 {d0.get('verdict') or '—'}。"
         )
     elif highlights:

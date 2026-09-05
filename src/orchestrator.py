@@ -72,8 +72,11 @@ class ChessMindOrchestrator:
 
     async def connect(self):
         if not self._connected:
-            await self.evaluator.connect()
-            self._connected = True
+            ok = await self.evaluator.connect()
+            self._connected = bool(ok)
+            if not ok:
+                err = getattr(self.evaluator, "_connect_error", None) or "unknown"
+                print(f"[ChessCouncil] Stockfish 未连接（降级启动）: {err}")
 
     def close(self):
         self.evaluator.close()
@@ -197,6 +200,30 @@ class ChessMindOrchestrator:
             ),
         }
         self.last_position_analysis = result
+        # 路演局面分析也写入复盘缓存（否则 Demo 后点复盘为空）
+        if with_analysis and analysis.get("council"):
+            demo_meta = getattr(self, "_demo_diverge", False)
+            self.move_analyses.append(
+                {
+                    "move": {
+                        "san": "局面分析",
+                        "uci": "",
+                        "number": max(game.move_count, 0),
+                    },
+                    "evaluation": result["evaluation"],
+                    "analysis": {
+                        "summary": analysis.get("summary"),
+                        "council": analysis.get("council"),
+                    },
+                    "fen": result["fen"],
+                    "position_only": True,
+                    "demo": bool(demo_meta),
+                }
+            )
+            try:
+                self.persist_game(with_review=False)
+            except Exception:
+                pass
         return result
 
     def get_review(self) -> dict:
@@ -514,6 +541,7 @@ class ChessMindOrchestrator:
 
         info = {
             "stockfish": self._connected,
+            "stockfish_error": getattr(self.evaluator, "_connect_error", None),
             "llm_enabled": LLM_ENABLED,
             "llm_model": LLM_MODEL,
             "llm_base_url": LLM_BASE_URL,

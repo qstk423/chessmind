@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src ./src
 COPY frontend ./frontend
+COPY docs ./docs
 
 ENV STOCKFISH_PATH=/usr/games/stockfish \
     HOST=0.0.0.0 \

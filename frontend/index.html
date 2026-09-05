@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=persist3">
+<link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
+<link rel="stylesheet" href="style.css?v=polish4">
 </head>
 <body>
 <div class="app-shell">
@@ -25,6 +25,22 @@
       <span id="game-status" class="pill pill-soft">白方先行</span>
     </div>
   </header>
+
+  <div class="pitch-bar" role="region" aria-label="路演快捷操作">
+    <div class="pitch-copy">
+      <strong>路演</strong>
+      <span>一键争议 Demo → 辩论 → 复盘；或快速 AI 对战（关 Council）</span>
+    </div>
+    <div class="pitch-actions">
+      <button id="btn-pitch-demo" class="accent" type="button">希腊赠礼 · 辩论</button>
+      <button id="btn-pitch-fast" type="button">快速 AI 对战</button>
+      <button id="btn-show-logs" type="button">调用证明</button>
+    </div>
+    <div id="council-progress" class="council-progress" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="council-progress-text">Council 分析中…</span>
+    </div>
+  </div>
 
   <div class="toolbar">
     <label class="field">
@@ -211,6 +227,16 @@
       <div id="pgn-result"></div>
     </details>
 
+    <details class="tool-block" id="logs-section">
+      <summary>调用证明 · LLM 日志</summary>
+      <p class="tool-hint">大赛提交用：展示模型名、Agent、耗时与 Token（同源 logs/llm_calls.jsonl）</p>
+      <div class="history-actions">
+        <button id="btn-refresh-logs" type="button">刷新日志</button>
+        <button id="btn-ping-llm" type="button">Ping 模型</button>
+      </div>
+      <div id="logs-list" class="logs-list"></div>
+    </details>
+
     <details class="tool-block" id="review-section" style="display:none" open>
       <summary>赛后复盘</summary>
       <div id="review-result"></div>
@@ -218,9 +244,9 @@
   </section>
 </div>
 
-<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
-<script src="app.js?v=persist3"></script>
+<script src="vendor/jquery-3.7.1.min.js"></script>
+<script src="vendor/chessboard-1.0.0.min.js"></script>
+<script src="vendor/chess-0.10.3.min.js"></script>
+<script src="app.js?v=polish4"></script>
 </body>
 </html>

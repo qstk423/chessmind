@@ -269,6 +269,7 @@ async def health(ping_llm: bool = Query(False, description="是否实际 ping �
     state = orchestrator.get_state()
     return {
         "stockfish": orchestrator._connected,
+        "stockfish_error": getattr(orchestrator.evaluator, "_connect_error", None),
         "llm_enabled": state["llm_enabled"],
         "llm_model": state["llm_model"],
         "mode": state["mode"],

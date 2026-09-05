@@ -23,21 +23,21 @@
 
 ## 提交清单
 
-- [ ] 可运行代码 + README  
-- [ ] `.env.example`（无真实 Key）  
-- [ ] 说明文档（本文件可作底稿）  
+- [x] 可运行代码 + README  
+- [x] `.env.example`（无真实 Key）  
+- [x] 说明文档（本文件可作底稿）  
 - [ ] 录屏：Demo 辩论 + AI vs AI +（可选）识谱  
-- [ ] `logs/llm_calls.jsonl` 样例（时间与录屏一致）  
+- [x] `docs/samples/llm_calls.sample.jsonl` 样例格式；正式提交用录屏同步的 `logs/llm_calls.jsonl`  
 - [ ] 运行态模型：`glm-5.1`（大赛 Token 到位后切换）
 
 ## 现场操作顺序
 
-1. `python -m src.main`  
-2. 打开页面 → 点 **「希腊赠礼（攻王弃象）」**  
-3. 等 Council 完成 → 切到 **🔥 辩论** Tab  
-4. 再开 **AI vs AI 自动对战** 几步  
-5. 点 **赛后复盘**  
-6. 另屏 `tail -f logs/llm_calls.jsonl`
+1. `python -m src.main`（或 `docker compose up`）  
+2. 打开页面 → 顶部路演栏点 **「希腊赠礼 · 辩论」**  
+3. 等进度条结束 → 侧栏自动切到 **辩论** Tab  
+4. 点 **复盘**（局面分析已写入复盘缓存）  
+5. 再点 **「快速 AI 对战」**（关 Council，快进算法对抗）  
+6. 点 **调用证明** 或另屏 `tail -f logs/llm_calls.jsonl`
 
 ## Token 切换（大赛发下来后）
 

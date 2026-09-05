@@ -49,7 +49,7 @@ body {
   align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 .brand {
@@ -88,6 +88,71 @@ body {
   gap: 8px;
   justify-content: flex-end;
 }
+
+.pitch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(210, 176, 106, 0.12), rgba(22, 50, 39, 0.55));
+}
+.pitch-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  flex: 1;
+  font-size: 0.86rem;
+  color: var(--ink-dim);
+}
+.pitch-copy strong {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--gold);
+  font-weight: 600;
+}
+.pitch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.council-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--gold);
+  width: 100%;
+}
+.council-progress[hidden] { display: none !important; }
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(210, 176, 106, 0.25);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.logs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+}
+.log-item {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #12291f;
+  font-size: 0.84rem;
+}
+.log-item .meta { color: var(--muted); font-size: 0.76rem; }
 
 .pill {
   display: inline-flex;
