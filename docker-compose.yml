@@ -1,0 +1,19 @@
+services:
+  chesscouncil:
+    build: .
+    ports:
+      - "${PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      STOCKFISH_PATH: /usr/games/stockfish
+      HOST: "0.0.0.0"
+      PORT: "8000"
+    volumes:
+      - chesscouncil-data:/app/data
+      - chesscouncil-logs:/app/logs
+    restart: unless-stopped
+
+volumes:
+  chesscouncil-data:
+  chesscouncil-logs:

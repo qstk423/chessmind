@@ -1,4 +1,4 @@
-"""FastAPI 路由——对弈 / Council / Demo / 复盘 / 多模态识谱"""
+"""FastAPI 路由——对弈 / Council / Demo / 复盘 / 多模态识谱 / 历史"""
 from io import StringIO
 from typing import Literal
 
@@ -6,11 +6,13 @@ import chess.pgn
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from src.board.fen_edit import board_grid, set_square_piece, set_turn
 from src.board.game_state import GameState
 from src.board.vision_fen import fen_from_image_bytes
 from src.council.demos import list_demos
 from src.llm_logger import recent_logs
 from src.orchestrator import ChessMindOrchestrator
+from src.storage import delete_game, get_game, list_games
 
 router = APIRouter()
 orchestrator = ChessMindOrchestrator()
@@ -44,6 +46,22 @@ class FenRequest(BaseModel):
 
 class AnalyzePositionRequest(BaseModel):
     with_analysis: bool = True
+
+
+class FenSquareRequest(BaseModel):
+    fen: str
+    square: str
+    piece: str | None = None
+
+
+class FenTurnRequest(BaseModel):
+    fen: str
+    turn: Literal["w", "b", "white", "black"]
+
+
+class SaveGameRequest(BaseModel):
+    title: str | None = None
+    with_review: bool = False
 
 
 # ── 对弈模式 ──
@@ -109,6 +127,79 @@ def game_review():
     return orchestrator.get_review()
 
 
+@router.post("/game/save")
+def save_game(req: SaveGameRequest | None = None):
+    title = None if req is None else req.title
+    with_review = False if req is None else req.with_review
+    saved = orchestrator.persist_game(title=title, with_review=with_review)
+    if "error" in saved:
+        raise HTTPException(status_code=400, detail=saved)
+    return {"status": "ok", "game": saved}
+
+
+# ── FEN 纠错 ──
+
+@router.get("/fen/grid")
+def fen_grid(fen: str = Query(...)):
+    try:
+        return board_grid(fen)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"error": str(e)}) from e
+
+
+@router.post("/fen/set-square")
+def fen_set_square(req: FenSquareRequest):
+    result = set_square_piece(req.fen, req.square, req.piece)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result)
+    return result
+
+
+@router.post("/fen/set-turn")
+def fen_set_turn(req: FenTurnRequest):
+    result = set_turn(req.fen, req.turn)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result)
+    return result
+
+
+# ── 对局历史 ──
+
+@router.get("/games")
+def games_list(limit: int = Query(30, ge=1, le=100)):
+    return {"games": list_games(limit)}
+
+
+@router.get("/games/{game_id}")
+def games_get(game_id: str):
+    row = get_game(game_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="对局不存在")
+    return row
+
+
+@router.delete("/games/{game_id}")
+def games_delete(game_id: str):
+    if not delete_game(game_id):
+        raise HTTPException(status_code=404, detail="对局不存在")
+    return {"status": "ok", "deleted": game_id}
+
+
+@router.post("/games/{game_id}/restore")
+def games_restore(game_id: str):
+    """恢复历史局面到当前棋盘（不重放逐步分析）。"""
+    row = get_game(game_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="对局不存在")
+    fen = row.get("fen_current") or row.get("fen_start")
+    if not fen:
+        raise HTTPException(status_code=400, detail="该记录无 FEN")
+    state = orchestrator.load_fen(fen)
+    if "error" in state:
+        raise HTTPException(status_code=400, detail=state)
+    return {"status": "ok", "restored_from": game_id, **state}
+
+
 # ── Demo ──
 
 @router.get("/demos")
@@ -137,25 +228,38 @@ async def run_demo(demo_id: str):
 # ── 多模态识谱 ──
 
 @router.post("/vision/fen")
-async def vision_fen(file: UploadFile = File(...), apply: bool = Query(True)):
-    """上传棋盘截图识别 FEN；apply=true 时加载到当前棋局。"""
+async def vision_fen(
+    file: UploadFile = File(...),
+    apply: bool = Query(True, description="识别后是否加载到当前棋局"),
+    analyze: bool = Query(False, description="加载后是否立刻跑 Council 分析"),
+    side_to_move: str | None = Query(None, description="强制行棋方 w/b/white/black"),
+):
+    """上传棋盘照片/截图 → FEN，并可直接映射到数字棋盘。"""
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="空文件")
-    if len(raw) > 8 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="图片过大（限制 8MB）")
+    if len(raw) > 12 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="图片过大（限制 12MB）")
 
-    result = await fen_from_image_bytes(raw, filename=file.filename, client=orchestrator.llm_client)
+    result = await fen_from_image_bytes(
+        raw,
+        filename=file.filename,
+        client=orchestrator.llm_client,
+        side_to_move=side_to_move,
+    )
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result)
 
     state = None
+    analysis = None
     if apply:
         state = orchestrator.load_fen(result["fen"])
         if "error" in state:
             raise HTTPException(status_code=400, detail=state)
+        if analyze:
+            analysis = await orchestrator.analyze_position(with_analysis=True)
 
-    return {"status": "ok", "vision": result, "state": state}
+    return {"status": "ok", "vision": result, "state": state, "analysis": analysis}
 
 
 @router.get("/health")

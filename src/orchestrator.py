@@ -28,6 +28,7 @@ from src.council.debate import ArbiterAgent, consensus_verdict, run_debate
 from src.council.demos import get_demo, list_demos
 from src.council.disagreement import compute_disagreement
 from src.council.review import build_review
+from src.storage import upsert_game
 from src.llm_logger import new_game_id, set_context
 
 GameMode = Literal["human_vs_human", "human_vs_ai", "ai_vs_ai"]
@@ -54,6 +55,7 @@ class ChessMindOrchestrator:
         self.move_analyses: list[dict] = []
         self.last_position_analysis: dict | None = None
         self._demo_diverge = False
+        self.fen_start: str = self.game.fen
 
         self.llm_client = (
             AsyncOpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
@@ -98,6 +100,7 @@ class ChessMindOrchestrator:
         self.move_analyses = []
         self.last_position_analysis = None
         self._demo_diverge = False
+        self.fen_start = self.game.fen
         return self.get_state()
 
     def load_fen(self, fen: str) -> dict:
@@ -110,7 +113,32 @@ class ChessMindOrchestrator:
         self.move_analyses = []
         self.last_position_analysis = None
         self._demo_diverge = False
+        self.fen_start = self.game.fen
         return self.get_state()
+
+    def persist_game(self, *, title: str | None = None, with_review: bool = False) -> dict:
+        """写入 SQLite；终局或显式保存时调用。"""
+        if not self.game_id:
+            return {"error": "无当前对局"}
+        review = None
+        if with_review or self.game.is_game_over:
+            review = self.get_review()
+        return upsert_game(
+            game_id=self.game_id,
+            mode=self.mode,
+            title=title,
+            result=self.game.result,
+            fen_start=self.fen_start,
+            fen_current=self.game.fen,
+            pgn=self.game.to_pgn(),
+            move_count=self.game.move_count,
+            review=review,
+            meta={
+                "human_color": self.human_color,
+                "white_ai": self.white_ai,
+                "coach_level": self.coach_level,
+            },
+        )
 
     def load_demo(self, demo_id: str) -> dict:
         demo = get_demo(demo_id)
@@ -394,6 +422,12 @@ class ChessMindOrchestrator:
                     "fen": result["fen"],
                 }
             )
+        if game is self.game:
+            try:
+                saved = self.persist_game(with_review=bool(game.is_game_over))
+                result["saved"] = {"id": saved.get("id"), "updated_at": saved.get("updated_at")}
+            except Exception as e:
+                result["saved"] = {"error": f"{type(e).__name__}: {e}"}
         return result
 
     async def choose_ai_uci(self) -> dict:

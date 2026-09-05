@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=clubui2">
+<link rel="stylesheet" href="style.css?v=persist3">
 </head>
 <body>
 <div class="app-shell">
@@ -139,21 +139,69 @@
 
   <section class="tools">
     <details class="tool-block" open>
+      <summary>拍照识谱 · 映射到棋盘</summary>
+      <p class="tool-hint">拍实体棋盘或选相册照片，识别后可纠错再分析</p>
+      <div class="vision-panel">
+        <div class="vision-preview-wrap">
+          <img id="vision-preview" class="vision-preview" alt="预览" hidden>
+          <div id="vision-preview-empty" class="vision-preview-empty">尚未选择照片</div>
+        </div>
+        <div class="vision-controls">
+          <label class="vision-file-btn">
+            拍照 / 选图
+            <input type="file" id="vision-file" accept="image/*" capture="environment" hidden>
+          </label>
+          <label class="field inline">
+            <span>行棋方</span>
+            <select id="vision-side">
+              <option value="">自动</option>
+              <option value="w">白方</option>
+              <option value="b">黑方</option>
+            </select>
+          </label>
+          <label class="field check inline">
+            <input type="checkbox" id="vision-analyze">
+            <span>映射后直接分析</span>
+          </label>
+          <button id="btn-vision" class="accent" type="button">识别并映射</button>
+          <button id="btn-edit-fen" type="button">打开纠错</button>
+          <button id="btn-analyze-pos" type="button">仅分析当前局面</button>
+          <span id="vision-status" class="vision-status"></span>
+        </div>
+      </div>
+      <div id="fen-editor" class="fen-editor" hidden>
+        <p class="tool-hint">选棋子后点棋盘格子放置；点「空」再点格子清除。确认后写回服务器并可分析。</p>
+        <div id="piece-palette" class="piece-palette" role="listbox" aria-label="棋子调色板"></div>
+        <div class="fen-editor-row">
+          <label class="field inline">
+            <span>行棋方</span>
+            <select id="edit-turn">
+              <option value="w">白方</option>
+              <option value="b">黑方</option>
+            </select>
+          </label>
+          <button id="btn-apply-fen" class="accent" type="button">确认纠错</button>
+          <button id="btn-apply-analyze" type="button">确认并分析</button>
+          <button id="btn-cancel-edit" type="button">退出纠错</button>
+        </div>
+        <code id="edit-fen-preview" class="fen-preview"></code>
+      </div>
+    </details>
+
+    <details class="tool-block" open>
+      <summary>对局历史</summary>
+      <p class="tool-hint">走子自动写入本地 SQLite；可恢复局面或删除</p>
+      <div class="history-actions">
+        <button id="btn-save-game" type="button">保存当前对局</button>
+        <button id="btn-refresh-history" type="button">刷新列表</button>
+      </div>
+      <div id="history-list" class="history-list"></div>
+    </details>
+
+    <details class="tool-block" open>
       <summary>路演 Demo</summary>
       <p class="tool-hint">一键加载高争议局面并跑 Council</p>
       <div id="demo-buttons" class="demo-buttons"></div>
-    </details>
-
-    <details class="tool-block">
-      <summary>多模态识谱</summary>
-      <div class="vision-row">
-        <label class="vision-label">
-          <input type="file" id="vision-file" accept="image/*">
-        </label>
-        <button id="btn-vision" type="button">识别并加载</button>
-        <button id="btn-analyze-pos" type="button">分析当前局面</button>
-        <span id="vision-status" class="vision-status"></span>
-      </div>
     </details>
 
     <details class="tool-block">
@@ -173,6 +221,6 @@
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
-<script src="app.js?v=clubui1"></script>
+<script src="app.js?v=persist3"></script>
 </body>
 </html>

@@ -17,6 +17,16 @@ const STEP_DELAY_MS = 1200;
 /** 上一步起终点（JJ 象棋风格：起点留白点） */
 let lastMoveFrom = null;
 let lastMoveTo = null;
+/** 识谱纠错模式 */
+let editMode = false;
+let editPiece = ''; // '' = erase, else KQRBNPkqrbnp
+let editBoard = null; // Chess instance while editing
+
+const PIECE_GLYPH = {
+  K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '♙',
+  k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
+  '': '空',
+};
 
 function initBoard() {
   board = Chessboard('board', {
@@ -44,6 +54,10 @@ function humanMayMove() {
 }
 
 function handleSquareClick(square) {
+  if (editMode) {
+    placeEditPiece(square);
+    return;
+  }
   if (!humanMayMove()) return;
 
   if (selectedSquare === null) {
@@ -638,37 +652,316 @@ $('#btn-analyze-pos').click(async () => {
   }
 });
 
-$('#btn-vision').click(async () => {
-  const file = $('#vision-file')[0].files[0];
+async function compressImageFile(file, maxSide = 1280, quality = 0.82) {
+  if (!file || !file.type.startsWith('image/')) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob) return file;
+    return new File([blob], (file.name || 'board').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch (_) {
+    return file;
+  }
+}
+
+function showVisionPreview(file) {
   if (!file) {
-    alert('请先选择棋盘截图');
+    $('#vision-preview').attr('hidden', true).attr('src', '');
+    $('#vision-preview-empty').show();
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  $('#vision-preview-empty').hide();
+  $('#vision-preview').attr('hidden', false).attr('src', url);
+}
+
+$('#vision-file').on('change', function () {
+  const file = this.files && this.files[0];
+  showVisionPreview(file || null);
+  if (file) $('#vision-status').text(`已选择：${file.name}`);
+});
+
+$('#btn-vision').click(async () => {
+  const input = $('#vision-file')[0];
+  const file = input.files && input.files[0];
+  if (!file) {
+    alert('请先拍照或选择棋盘照片');
     return;
   }
   if (busy) return;
   busy = true;
-  $('#vision-status').text('识别中…');
+  stopAuto();
+  $('#vision-status').text('压缩并识别中…');
+  $('#ai-meta').text('正在把照片映射到棋盘…');
   try {
+    const compressed = await compressImageFile(file);
+    const side = $('#vision-side').val() || '';
+    const analyze = $('#vision-analyze').is(':checked');
     const fd = new FormData();
-    fd.append('file', file);
-    const r = await fetch(`${API}/vision/fen?apply=true`, { method: 'POST', body: fd });
+    fd.append('file', compressed, compressed.name || 'board.jpg');
+    const qs = new URLSearchParams({
+      apply: 'true',
+      analyze: analyze ? 'true' : 'false',
+    });
+    if (side) qs.set('side_to_move', side);
+    const r = await fetch(`${API}/vision/fen?${qs.toString()}`, { method: 'POST', body: fd });
     const data = await r.json();
     if (!r.ok) {
-      $('#vision-status').text('失败');
-      alert('识谱失败：' + JSON.stringify(data.detail || data));
+      const detail = data.detail || data;
+      $('#vision-status').text('识别失败');
+      alert('识谱失败：' + (typeof detail === 'string' ? detail : JSON.stringify(detail)));
       return;
     }
     const state = data.state || {};
     applyServerState(state);
+    clearLastMoveMarkers();
     game.load(state.fen);
     board.position(state.fen, false);
-    $('#vision-status').text(`FEN 已加载 · ${data.vision?.vision_model || ''}`);
-    $('#ai-meta').text('截图局面已加载，可点「分析当前局面」');
+    selectedSquare = null;
+    clearHighlights();
     updateStatus();
+    const fenShort = (data.vision && data.vision.fen) ? data.vision.fen.split(' ').slice(0, 2).join(' ') : '';
+    $('#vision-status').text(
+      `已映射 · ${data.vision?.vision_model || ''} · ${Math.round(data.vision?.latency_ms || 0)}ms`
+    );
+    $('#ai-meta').text(`照片局面已加载：${fenShort}`);
+
+    if (data.analysis) {
+      applyMoveResult({
+        ...data.analysis,
+        move: { san: '识谱分析', uci: '', number: 0 },
+      });
+      $('#ai-meta').text('照片已映射，Council 分析完成');
+    } else {
+      enterEditMode(state.fen);
+      $('#vision-status').text(
+        `已映射 · 请纠错后确认 · ${data.vision?.vision_model || ''} · ${Math.round(data.vision?.latency_ms || 0)}ms`
+      );
+    }
   } catch (e) {
+    console.error(e);
     $('#vision-status').text('请求失败');
   } finally {
     busy = false;
   }
+});
+
+function buildPiecePalette() {
+  const box = $('#piece-palette').empty();
+  const order = ['K', 'Q', 'R', 'B', 'N', 'P', 'k', 'q', 'r', 'b', 'n', 'p', ''];
+  order.forEach((sym) => {
+    const btn = $('<button type="button" class="piece-btn"></button>')
+      .attr('data-piece', sym)
+      .text(PIECE_GLYPH[sym] || sym)
+      .attr('title', sym || '清空格子');
+    if (sym === editPiece) btn.addClass('active');
+    btn.on('click', () => {
+      editPiece = sym;
+      $('.piece-btn').removeClass('active');
+      btn.addClass('active');
+    });
+    box.append(btn);
+  });
+}
+
+function syncEditFenPreview() {
+  if (!editBoard) return;
+  const parts = editBoard.fen().split(' ');
+  parts[1] = $('#edit-turn').val() || 'w';
+  $('#edit-fen-preview').text(parts.join(' '));
+  board.position(editBoard.fen(), false);
+}
+
+function enterEditMode(fen) {
+  stopAuto();
+  deselectPiece();
+  clearLastMoveMarkers();
+  editMode = true;
+  editBoard = new Chess();
+  try {
+    editBoard.load(fen);
+  } catch (_) {
+    editBoard.reset();
+  }
+  const turn = editBoard.turn() === 'b' ? 'b' : 'w';
+  $('#edit-turn').val(turn);
+  editPiece = 'P';
+  buildPiecePalette();
+  $('#fen-editor').prop('hidden', false);
+  $('.board-frame').addClass('edit-mode');
+  syncEditFenPreview();
+  $('#ai-meta').text('纠错模式：点格子放置棋子');
+}
+
+function exitEditMode() {
+  editMode = false;
+  editBoard = null;
+  $('#fen-editor').prop('hidden', true);
+  $('.board-frame').removeClass('edit-mode');
+}
+
+function placeEditPiece(square) {
+  if (!editBoard) return;
+  editBoard.remove(square);
+  if (editPiece) {
+    const color = editPiece === editPiece.toUpperCase() ? 'w' : 'b';
+    const type = editPiece.toLowerCase();
+    editBoard.put({ type, color }, square);
+  }
+  syncEditFenPreview();
+}
+
+function currentEditFen() {
+  if (!editBoard) return game.fen();
+  const parts = editBoard.fen().split(' ');
+  parts[1] = $('#edit-turn').val() || 'w';
+  // 清掉易位/吃过路兵，避免随意摆子后非法
+  parts[2] = '-';
+  parts[3] = '-';
+  return parts.join(' ');
+}
+
+async function applyEditedFen({ analyze }) {
+  if (busy) return;
+  busy = true;
+  try {
+    const fen = currentEditFen();
+    const r = await fetch(`${API}/game/load-fen`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fen }),
+    });
+    const state = await r.json();
+    if (!r.ok) {
+      alert('应用失败：' + JSON.stringify(state.detail || state));
+      return;
+    }
+    applyServerState(state);
+    clearLastMoveMarkers();
+    game.load(state.fen);
+    board.position(state.fen, false);
+    selectedSquare = null;
+    clearHighlights();
+    updateStatus();
+    exitEditMode();
+    $('#vision-status').text('纠错已确认');
+    if (analyze) {
+      const ar = await fetch(`${API}/game/analyze-position`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ with_analysis: true }),
+      });
+      const data = await ar.json();
+      if (ar.ok) {
+        applyMoveResult({
+          ...data,
+          move: { san: '纠错后分析', uci: '', number: 0 },
+        });
+        $('#ai-meta').text('纠错局面 Council 完成');
+      }
+    } else {
+      $('#ai-meta').text('纠错局面已加载');
+    }
+    refreshHistory();
+  } finally {
+    busy = false;
+  }
+}
+
+$('#btn-edit-fen').click(() => enterEditMode(game.fen()));
+$('#btn-cancel-edit').click(() => {
+  exitEditMode();
+  board.position(game.fen(), false);
+  updateStatus();
+});
+$('#edit-turn').on('change', syncEditFenPreview);
+$('#btn-apply-fen').click(() => applyEditedFen({ analyze: false }));
+$('#btn-apply-analyze').click(() => applyEditedFen({ analyze: true }));
+
+async function refreshHistory() {
+  const box = $('#history-list');
+  try {
+    const data = await fetch(`${API}/games?limit=20`).then((r) => r.json());
+    const games = data.games || [];
+    if (!games.length) {
+      box.html('<div class="history-empty">暂无历史对局</div>');
+      return;
+    }
+    box.empty();
+    games.forEach((g) => {
+      const item = $('<div class="history-item"></div>');
+      const when = (g.updated_at || g.created_at || '').replace('T', ' ').slice(0, 19);
+      item.append(
+        $('<div></div>').html(
+          `<strong>${g.title || g.id.slice(0, 8)}</strong>` +
+            `<div class="meta">${when} · ${g.mode || '?'} · ${g.move_count || 0} 步` +
+            (g.result ? ` · ${g.result}` : '') +
+            `</div>`
+        )
+      );
+      const actions = $('<div class="actions"></div>');
+      const restore = $('<button type="button">恢复</button>').on('click', async () => {
+        if (busy) return;
+        busy = true;
+        try {
+          const r = await fetch(`${API}/games/${g.id}/restore`, { method: 'POST' });
+          const state = await r.json();
+          if (!r.ok) {
+            alert('恢复失败');
+            return;
+          }
+          stopAuto();
+          exitEditMode();
+          applyServerState(state);
+          clearLastMoveMarkers();
+          game.load(state.fen);
+          board.position(state.fen, false);
+          selectedSquare = null;
+          clearHighlights();
+          updateStatus();
+          $('#ai-meta').text(`已恢复历史局面 ${g.id.slice(0, 8)}`);
+        } finally {
+          busy = false;
+        }
+      });
+      const del = $('<button type="button">删除</button>').on('click', async () => {
+        if (!confirm('删除该历史记录？')) return;
+        await fetch(`${API}/games/${g.id}`, { method: 'DELETE' });
+        refreshHistory();
+      });
+      actions.append(restore, del);
+      item.append(actions);
+      box.append(item);
+    });
+  } catch (_) {
+    box.html('<div class="history-empty">历史加载失败</div>');
+  }
+}
+
+$('#btn-refresh-history').click(() => refreshHistory());
+$('#btn-save-game').click(async () => {
+  const title = prompt('对局标题（可留空）', '') || null;
+  const r = await fetch(`${API}/game/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, with_review: true }),
+  });
+  const data = await r.json();
+  if (!r.ok) {
+    alert('保存失败');
+    return;
+  }
+  $('#ai-meta').text(`已保存 ${data.game?.id?.slice(0, 8) || ''}`);
+  refreshHistory();
 });
 
 $('.tab').click(function () {
@@ -723,6 +1016,7 @@ $(document).ready(async () => {
   });
   await startNewGame();
   await loadDemos();
+  refreshHistory();
   try {
     const h = await fetch(`${API}/health`).then(r => r.json());
     $('#llm-status').text(

@@ -13,3 +13,6 @@ venv/
 
 # LLM 调用日志（可本地保留作提交证明，默认不入库）
 logs/
+
+# SQLite 对局库
+data/

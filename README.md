@@ -14,9 +14,11 @@
 - **走子轨迹**：半透明起点 + 虚线路径 + 终点高亮（JJ 风格）
 - **路演 Demo**：希腊赠礼等高争议局面一键 Council
 - **赛后复盘**：争议步、辩论次数、叙事与 PGN
-- **多模态识谱**：棋盘截图 → FEN（视觉大模型）
+- **多模态识谱**：棋盘截图 → FEN，支持格子纠错后再分析
+- **对局历史**：SQLite 持久化，可恢复局面
 - **调用日志**：`logs/llm_calls.jsonl`，便于大赛提交调用证明
 - **无 Key 降级**：仍可引擎对弈与评分；LLM 相关能力跳过或回退
+- **Docker**：`docker compose up` 一键部署（镜像内含 Stockfish）
 
 ## 工作原理
 
@@ -58,6 +60,15 @@ python -m src.main
 
 打开 http://127.0.0.1:8000
 
+### Docker 一键部署
+
+```bash
+cp .env.example .env   # 填入 Key
+docker compose up --build
+```
+
+服务监听 `http://127.0.0.1:8000`；对局库与日志挂载到 named volume。
+
 ### `.env` 示例
 
 **开发（阿里云百炼千问）：**
@@ -92,6 +103,10 @@ LLM_MODEL=glm-5.1
 | `GET /api/demos` | 路演 Demo 列表 |
 | `POST /api/demos/{id}/run` | 加载 Demo 并跑 Council |
 | `POST /api/vision/fen` | 上传截图识别 FEN |
+| `POST /api/game/save` | 手动保存当前对局到 SQLite |
+| `GET /api/games` | 对局历史列表 |
+| `POST /api/games/{id}/restore` | 恢复历史局面 |
+| `POST /api/fen/set-square` | FEN 纠错：改格子 |
 | `GET /api/health?ping_llm=true` | 健康检查 |
 | `GET /api/logs/recent` | 最近 LLM 调用日志 |
 
