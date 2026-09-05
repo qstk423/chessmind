@@ -13,6 +13,7 @@ from src.agents.risk import RiskAgent
 from src.agents.strategic import StrategicAgent
 from src.agents.tactical import TacticalAgent
 from src.board.game_state import GameState
+from src.board.mate_patterns import detect_finale
 from src.board.move_evaluator import MoveEvaluator
 from src.board.position_features import describe_position
 from src.config import (
@@ -436,6 +437,10 @@ class ChessMindOrchestrator:
         }
         if ai_meta:
             result["ai"] = ai_meta
+        if game.is_game_over:
+            finale = detect_finale(game.board)
+            if finale:
+                result["finale"] = finale
         # 仅主对局缓存复盘材料
         if game is self.game and with_analysis:
             self.move_analyses.append(

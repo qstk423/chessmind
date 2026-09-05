@@ -173,6 +173,98 @@ function applyServerState(state) {
   refreshModeControls();
 }
 
+const FINALE_PRESETS = [
+  { id: 'ladder', title: '双车错', subtitle: 'Ladder Mate', blurb: '双车梯次封锁，王退到边线无路。', winner: 'white' },
+  { id: 'back_rank', title: '底线杀', subtitle: 'Back-Rank Mate', blurb: '底线被车/后切开，退路被己方堵死。', winner: 'white' },
+  { id: 'smothered', title: '闷杀', subtitle: 'Smothered Mate', blurb: '马步将军，王被己方棋子围死。', winner: 'white' },
+  { id: 'queen', title: '后到功成', subtitle: 'Queen Mate', blurb: '后完成绝杀。', winner: 'white' },
+  { id: 'checkmate', title: '将死！', subtitle: 'Checkmate', blurb: '无路可逃，对局结束。', winner: 'white' },
+];
+let finalePreviewIdx = 0;
+
+function inferFinaleClient(data) {
+  if (!data || !data.game_over) return null;
+  const result = data.result || '';
+  if (result.includes('逼和') || result.includes('和棋')) {
+    return {
+      id: result.includes('逼和') ? 'stalemate' : 'draw',
+      title: result.includes('逼和') ? '逼和' : '和棋',
+      subtitle: result.includes('逼和') ? 'Stalemate' : 'Draw',
+      blurb: result,
+      winner: null,
+      highlight_squares: [],
+    };
+  }
+  return {
+    id: 'checkmate',
+    title: '将死！',
+    subtitle: 'Checkmate',
+    blurb: result || '对局结束',
+    winner: result.includes('黑') ? 'black' : 'white',
+    highlight_squares: [],
+  };
+}
+
+function clearMateHighlights() {
+  $('#board .square-55d63').removeClass('mate-glow mate-king');
+  $('.board-frame').removeClass('finale-pulse');
+}
+
+function paintMateHighlights(squares) {
+  clearMateHighlights();
+  $('.board-frame').addClass('finale-pulse');
+  (squares || []).forEach((sq, i) => {
+    const el = $(`#board .square-55d63[data-square="${sq}"]`);
+    if (!el.length) return;
+    if (i === 0) el.addClass('mate-king');
+    else el.addClass('mate-glow');
+  });
+}
+
+function hideFinale() {
+  const overlay = $('#finale-overlay');
+  overlay.prop('hidden', true).attr('aria-hidden', 'true');
+  clearMateHighlights();
+}
+
+function showFinale(finale) {
+  if (!finale) return;
+  stopAuto();
+  const id = finale.id || 'checkmate';
+  const winnerLabel = finale.winner === 'white' ? '白方胜' : finale.winner === 'black' ? '黑方胜' : '和棋';
+  $('#finale-overlay .finale-stage').attr('data-mate', id);
+  $('#finale-kicker').text(winnerLabel);
+  $('#finale-title').text(finale.title || '将死！');
+  $('#finale-sub').text(finale.subtitle || '');
+  $('#finale-blurb').text(finale.blurb || '');
+  paintMateHighlights(finale.highlight_squares || []);
+  // 重触发 CSS 动画
+  const stage = document.querySelector('#finale-overlay .finale-stage');
+  if (stage) {
+    stage.style.animation = 'none';
+    // eslint-disable-next-line no-unused-expressions
+    stage.offsetHeight;
+    stage.style.animation = '';
+  }
+  $('#finale-overlay').prop('hidden', false).attr('aria-hidden', 'false');
+  $('#ai-meta').text(`${finale.title || '终局'} · ${winnerLabel}`);
+}
+
+$('#finale-close').click(() => hideFinale());
+$('#finale-review').click(() => {
+  hideFinale();
+  $('#btn-review').click();
+});
+$('#finale-new').click(() => {
+  hideFinale();
+  startNewGame();
+});
+$('#btn-preview-finale').click(() => {
+  const preset = FINALE_PRESETS[finalePreviewIdx % FINALE_PRESETS.length];
+  finalePreviewIdx += 1;
+  showFinale({ ...preset, highlight_squares: [] });
+});
+
 function applyMoveResult(data) {
   if (data.error) {
     console.error(data.error);
@@ -204,7 +296,7 @@ function applyMoveResult(data) {
   }
   if (data.game_over) {
     stopAuto();
-    setTimeout(() => alert('对局结束！\n' + (data.result || '')), 200);
+    showFinale(data.finale || inferFinaleClient(data));
   }
 }
 
@@ -473,6 +565,7 @@ function resetPanels() {
 
 async function startNewGame() {
   stopAuto();
+  hideFinale();
   busy = true;
   try {
     const r = await fetch(`${API}/game/new`, {

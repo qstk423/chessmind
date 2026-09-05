@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=polish4">
+<link rel="stylesheet" href="style.css?v=finale1">
 </head>
 <body>
 <div class="app-shell">
@@ -34,6 +34,7 @@
     <div class="pitch-actions">
       <button id="btn-pitch-demo" class="accent" type="button">希腊赠礼 · 辩论</button>
       <button id="btn-pitch-fast" type="button">快速 AI 对战</button>
+      <button id="btn-preview-finale" type="button">预览结算</button>
       <button id="btn-show-logs" type="button">调用证明</button>
     </div>
     <div id="council-progress" class="council-progress" hidden>
@@ -244,9 +245,32 @@
   </section>
 </div>
 
+<div id="finale-overlay" class="finale-overlay" hidden aria-hidden="true">
+  <div class="finale-backdrop"></div>
+  <div class="finale-stage" data-mate="checkmate">
+    <div class="finale-fx" aria-hidden="true">
+      <span class="fx-ring"></span>
+      <span class="fx-ring fx-ring-2"></span>
+      <span class="fx-beam fx-beam-a"></span>
+      <span class="fx-beam fx-beam-b"></span>
+      <span class="fx-cage"></span>
+      <span class="fx-rank"></span>
+    </div>
+    <p class="finale-kicker" id="finale-kicker">对局结束</p>
+    <h2 class="finale-title" id="finale-title">将死！</h2>
+    <p class="finale-sub" id="finale-sub">Checkmate</p>
+    <p class="finale-blurb" id="finale-blurb"></p>
+    <div class="finale-actions">
+      <button type="button" id="finale-review" class="accent">看复盘</button>
+      <button type="button" id="finale-close">继续</button>
+      <button type="button" id="finale-new">再来一局</button>
+    </div>
+  </div>
+</div>
+
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=polish4"></script>
+<script src="app.js?v=finale1"></script>
 </body>
 </html>
