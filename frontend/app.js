@@ -36,6 +36,12 @@ let online = {
   reconnectTimer: null,
 };
 
+/** 名谱自动演示 */
+let libraryAuto = false;
+let libraryAutoTimer = null;
+let libraryFilter = '';
+let currentLibraryHasScript = false;
+
 const PIECE_GLYPH = {
   K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '♙',
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
@@ -1268,6 +1274,214 @@ $('#btn-analyze-pgn').click(async () => {
   }
 });
 
+function stopAuto() {
+  autoPlay = false;
+  if (autoTimer) {
+    clearTimeout(autoTimer);
+    autoTimer = null;
+  }
+  $('#btn-auto').text('自动对战').prop('disabled', false);
+  $('#btn-pause').prop('disabled', true);
+}
+
+function stopLibraryAuto() {
+  libraryAuto = false;
+  if (libraryAutoTimer) {
+    clearTimeout(libraryAutoTimer);
+    libraryAutoTimer = null;
+  }
+  $('#btn-lib-auto').prop('disabled', !currentLibraryHasScript);
+  $('#btn-lib-stop').prop('disabled', true);
+}
+
+function updateLibraryChrome(lib) {
+  if (!lib) {
+    currentLibraryHasScript = false;
+    $('#lib-status').text('');
+    $('#btn-lib-step, #btn-lib-auto, #btn-lib-ai').prop('disabled', true);
+    $('#btn-lib-stop').prop('disabled', true);
+    return;
+  }
+  currentLibraryHasScript = !!lib.has_script;
+  const prog = lib.has_script
+    ? `跟谱 ${lib.index || 0}/${lib.total_moves || 0}`
+    : '局面体验（无固定名谱）';
+  $('#lib-status').text(
+    `${lib.title || ''} · ${prog}` + (lib.goal ? ` · 目标：${lib.goal}` : '')
+  );
+  $('#btn-lib-step').prop('disabled', !lib.has_script || !!lib.done);
+  $('#btn-lib-auto').prop('disabled', !lib.has_script || !!lib.done || libraryAuto);
+  $('#btn-lib-ai').prop('disabled', false);
+  $('#btn-lib-stop').prop('disabled', !libraryAuto);
+}
+
+async function loadLibraryItem(itemId, { mode, forAi } = {}) {
+  if (online.active) {
+    alert('请先退出联机房间，再加载名局/残局');
+    return;
+  }
+  stopAuto();
+  stopLibraryAuto();
+  hideFinale();
+  const body = {
+    mode: mode || (forAi ? 'ai_vs_ai' : 'human_vs_human'),
+    with_analysis: false,
+  };
+  const r = await fetch(`${API}/library/${encodeURIComponent(itemId)}/load`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const state = await r.json();
+  if (!r.ok) {
+    alert(JSON.stringify(state.detail || state));
+    return;
+  }
+  applyServerState(state);
+  clearLastMoveMarkers();
+  game.load(state.fen);
+  board.position(state.fen, false);
+  selectedSquare = null;
+  clearHighlights();
+  // 残局常执劣势方在下，保持白在下；若黑先行可翻面
+  if ((state.turn || '').startsWith('b')) {
+    orientation = 'black';
+    board.orientation('black');
+  } else {
+    orientation = 'white';
+    board.orientation('white');
+  }
+  updateStatus();
+  updateLibraryChrome(state.library);
+  $('#game-mode').val(body.mode);
+  refreshModeControls();
+  $('#ai-meta').text(`已加载：${state.library?.title || itemId}`);
+  if (forAi) {
+    autoDelayMs = FAST_STEP_DELAY_MS;
+    startAuto();
+  }
+}
+
+async function libraryStepOnce() {
+  if (busy) return false;
+  busy = true;
+  try {
+    const r = await fetch(`${API}/library/step`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ with_analysis: false }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      stopLibraryAuto();
+      $('#lib-status').text(data.detail?.error || data.detail || '演示结束');
+      updateLibraryChrome(data.detail?.library || data.library);
+      return false;
+    }
+    applyMoveResult(data);
+    updateLibraryChrome(data.library);
+    if (data.library?.done || data.game_over) {
+      stopLibraryAuto();
+      $('#ai-meta').text('名谱演示完成');
+      return false;
+    }
+    return true;
+  } finally {
+    busy = false;
+  }
+}
+
+function startLibraryAuto() {
+  if (!currentLibraryHasScript) return;
+  stopAuto();
+  libraryAuto = true;
+  $('#btn-lib-auto').prop('disabled', true);
+  $('#btn-lib-stop').prop('disabled', false);
+  const tick = async () => {
+    if (!libraryAuto) return;
+    const ok = await libraryStepOnce();
+    if (ok && libraryAuto) {
+      libraryAutoTimer = setTimeout(tick, 700);
+    }
+  };
+  tick();
+}
+
+async function loadLibraryList() {
+  const qs = libraryFilter ? `?category=${encodeURIComponent(libraryFilter)}` : '';
+  const box = $('#library-list');
+  try {
+    const data = await fetch(`${API}/library${qs}`).then((r) => r.json());
+    const items = data.items || [];
+    if (!items.length) {
+      box.html('<div class="history-empty">暂无条目</div>');
+      return;
+    }
+    box.empty();
+    items.forEach((it) => {
+      const el = $('<div class="lib-item"></div>');
+      el.append(`<h4>${escapeHtml(it.title)}</h4>`);
+      el.append(
+        `<div class="meta">${escapeHtml(it.category_label || it.category)}` +
+          (it.year ? ` · ${it.year}` : '') +
+          (it.players ? ` · ${escapeHtml(it.players)}` : '') +
+          (it.has_script ? ` · ${it.move_count} 步名谱` : ' · 局面体验') +
+          `</div>`
+      );
+      el.append(`<div class="blurb">${escapeHtml(it.blurb || '')}</div>`);
+      const row = $('<div class="row"></div>');
+      row.append(
+        $('<button type="button">加载体验</button>').on('click', () =>
+          loadLibraryItem(it.id, { mode: 'human_vs_human' })
+        )
+      );
+      if (it.has_script) {
+        row.append(
+          $('<button type="button" class="accent">演示名谱</button>').on('click', async () => {
+            await loadLibraryItem(it.id, { mode: 'human_vs_human' });
+            startLibraryAuto();
+          })
+        );
+      }
+      row.append(
+        $('<button type="button">AI 代下</button>').on('click', () =>
+          loadLibraryItem(it.id, { forAi: true })
+        )
+      );
+      if (it.tags && it.tags.includes('debate')) {
+        row.append(
+          $('<button type="button">Council 分析</button>').on('click', async () => {
+            await loadLibraryItem(it.id, { mode: 'human_vs_human' });
+            $('#btn-analyze-pos').click();
+          })
+        );
+      }
+      el.append(row);
+      box.append(el);
+    });
+  } catch (_) {
+    box.html('<div class="history-empty">学习库加载失败</div>');
+  }
+}
+
+$('.lib-filter').click(function () {
+  $('.lib-filter').removeClass('active');
+  $(this).addClass('active');
+  libraryFilter = $(this).data('cat') || '';
+  loadLibraryList();
+});
+$('#btn-lib-step').click(() => libraryStepOnce());
+$('#btn-lib-auto').click(() => startLibraryAuto());
+$('#btn-lib-stop').click(() => stopLibraryAuto());
+$('#btn-lib-ai').click(() => {
+  if (online.active) return;
+  $('#game-mode').val('ai_vs_ai');
+  $('#with-analysis').prop('checked', false);
+  autoDelayMs = FAST_STEP_DELAY_MS;
+  refreshModeControls();
+  startAuto();
+});
+
 function roomShareUrl(roomId) {
   const u = new URL(window.location.href);
   u.searchParams.set('room', roomId);
@@ -1532,6 +1746,7 @@ $(document).ready(async () => {
   }
 
   await loadDemos();
+  await loadLibraryList();
   refreshHistory();
   try {
     const h = await fetch(`${API}/health`).then(r => r.json());

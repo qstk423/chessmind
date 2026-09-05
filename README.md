@@ -16,6 +16,7 @@
 - **赛后复盘**：争议步、辩论次数、叙事与 PGN
 - **多模态识谱**：棋盘截图 → FEN，支持格子纠错后再分析
 - **对局历史**：SQLite 持久化，可恢复局面
+- **名局 / 残局库**：歌剧院局、不朽局、卢塞纳等；可跟谱演示或 AI 代下
 - **联机对弈**：创建房间码 / 分享链接，两人手机实时互下（WebSocket）
 - **路演快捷栏**：一键希腊赠礼 / 快速 AI 对战 / 调用证明
 - **离线前端资源**：jQuery / chessboard / 棋子图本地 vendor，弱网可演示
@@ -113,6 +114,9 @@ LLM_MODEL=glm-5.1
 | `GET /api/games` | 对局历史列表 |
 | `POST /api/games/{id}/restore` | 恢复历史局面 |
 | `POST /api/fen/set-square` | FEN 纠错：改格子 |
+| `GET /api/library` | 名局/残局/战术库列表 |
+| `POST /api/library/{id}/load` | 加载学习条目 |
+| `POST /api/library/step` | 名谱下一步 |
 | `POST /api/rooms` | 创建联机房间 |
 | `POST /api/rooms/{id}/join` | 加入房间 |
 | `WS /api/rooms/{id}/ws?token=` | 实时同步走子 |

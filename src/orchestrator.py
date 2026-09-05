@@ -29,6 +29,7 @@ from src.council.debate import ArbiterAgent, consensus_verdict, run_debate
 from src.council.demos import get_demo, list_demos
 from src.council.disagreement import compute_disagreement
 from src.council.review import build_review
+from src.library.catalog import get_library_item, list_library
 from src.storage import upsert_game
 from src.llm_logger import new_game_id, set_context
 
@@ -57,6 +58,10 @@ class ChessMindOrchestrator:
         self.last_position_analysis: dict | None = None
         self._demo_diverge = False
         self.fen_start: str = self.game.fen
+        self.library_id: str | None = None
+        self.library_moves: list[str] = []
+        self.library_index: int = 0
+        self.library_meta: dict | None = None
 
         self.llm_client = (
             AsyncOpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
@@ -105,6 +110,10 @@ class ChessMindOrchestrator:
         self.last_position_analysis = None
         self._demo_diverge = False
         self.fen_start = self.game.fen
+        self.library_id = None
+        self.library_moves = []
+        self.library_index = 0
+        self.library_meta = None
         return self.get_state()
 
     def load_fen(self, fen: str) -> dict:
@@ -118,7 +127,80 @@ class ChessMindOrchestrator:
         self.last_position_analysis = None
         self._demo_diverge = False
         self.fen_start = self.game.fen
+        self.library_id = None
+        self.library_moves = []
+        self.library_index = 0
+        self.library_meta = None
         return self.get_state()
+
+    def load_library(
+        self,
+        item_id: str,
+        *,
+        mode: GameMode | None = None,
+        with_analysis: bool | None = None,
+    ) -> dict:
+        """加载名局/残局：有谱则准备逐步演示；无谱则进入局面体验。"""
+        item = get_library_item(item_id)
+        if not item:
+            return {"error": f"未知条目：{item_id}", "available": [x["id"] for x in list_library()]}
+        if mode:
+            self.mode = mode
+        if with_analysis is not None:
+            self.with_analysis = with_analysis
+        state = self.load_fen(item["fen"])
+        if "error" in state:
+            return state
+        self.library_id = item["id"]
+        self.library_moves = list(item.get("moves") or [])
+        self.library_index = 0
+        self.library_meta = {
+            "id": item["id"],
+            "title": item["title"],
+            "category": item["category"],
+            "blurb": item["blurb"],
+            "goal": item.get("goal"),
+            "players": item.get("players"),
+            "year": item.get("year"),
+            "has_script": bool(self.library_moves),
+            "total_moves": len(self.library_moves),
+        }
+        self._demo_diverge = bool(item.get("diverge"))
+        state = self.get_state()
+        state["library"] = self.library_progress()
+        return state
+
+    def library_progress(self) -> dict | None:
+        if not self.library_id:
+            return None
+        total = len(self.library_moves)
+        return {
+            **(self.library_meta or {"id": self.library_id}),
+            "index": self.library_index,
+            "total_moves": total,
+            "remaining": max(0, total - self.library_index),
+            "done": self.library_index >= total if total else False,
+            "next_uci": self.library_moves[self.library_index] if self.library_index < total else None,
+        }
+
+    async def library_step(self, *, with_analysis: bool | None = None) -> dict:
+        """播放名谱下一步（严格跟谱）。"""
+        if not self.library_id or not self.library_moves:
+            return {"error": "当前没有可演示的名谱（残局请自行走子或 AI 代下）"}
+        if self.library_index >= len(self.library_moves):
+            return {"error": "名谱已演示完毕", "library": self.library_progress()}
+        uci = self.library_moves[self.library_index]
+        analyze = False if with_analysis is None else with_analysis
+        # 默认跟谱不跑 Council，避免一局长达数分钟；需要时前端显式打开
+        if with_analysis is None:
+            analyze = False
+        result = await self.analyze_move(self.game, uci, with_analysis=analyze)
+        if result is None or "error" in result:
+            return result or {"error": "跟谱走子失败"}
+        self.library_index += 1
+        result["library"] = self.library_progress()
+        result["book_move"] = True
+        return result
 
     def persist_game(self, *, title: str | None = None, with_review: bool = False) -> dict:
         """写入 SQLite；终局或显式保存时调用。"""
@@ -613,4 +695,5 @@ class ChessMindOrchestrator:
             "llm_enabled": LLM_ENABLED,
             "llm_model": LLM_MODEL,
             "product": "ChessCouncil",
+            "library": self.library_progress(),
         }

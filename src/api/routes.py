@@ -10,6 +10,7 @@ from src.board.fen_edit import board_grid, set_square_piece, set_turn
 from src.board.game_state import GameState
 from src.board.vision_fen import fen_from_image_bytes
 from src.council.demos import list_demos
+from src.library.catalog import list_library
 from src.llm_logger import recent_logs
 from src.orchestrator import ChessMindOrchestrator
 from src.storage import delete_game, get_game, list_games
@@ -62,6 +63,15 @@ class FenTurnRequest(BaseModel):
 class SaveGameRequest(BaseModel):
     title: str | None = None
     with_review: bool = False
+
+
+class LibraryLoadRequest(BaseModel):
+    mode: Literal["human_vs_human", "human_vs_ai", "ai_vs_ai"] | None = None
+    with_analysis: bool | None = None
+
+
+class LibraryStepRequest(BaseModel):
+    with_analysis: bool = False
 
 
 # ── 对弈模式 ──
@@ -223,6 +233,32 @@ async def run_demo(demo_id: str):
         raise HTTPException(status_code=404, detail=state)
     analysis = await orchestrator.analyze_position(with_analysis=True)
     return {"status": "ok", "demo": state.get("demo"), "state": state, "analysis": analysis}
+
+
+# ── 名局 / 残局库 ──
+
+@router.get("/library")
+def library_list(category: str | None = Query(None, description="game|endgame|puzzle")):
+    return {"items": list_library(category=category)}
+
+
+@router.post("/library/{item_id}/load")
+def library_load(item_id: str, req: LibraryLoadRequest | None = None):
+    mode = None if req is None else req.mode
+    with_analysis = None if req is None else req.with_analysis
+    state = orchestrator.load_library(item_id, mode=mode, with_analysis=with_analysis)
+    if "error" in state:
+        raise HTTPException(status_code=404, detail=state)
+    return {"status": "ok", **state}
+
+
+@router.post("/library/step")
+async def library_step(req: LibraryStepRequest | None = None):
+    with_analysis = False if req is None else req.with_analysis
+    result = await orchestrator.library_step(with_analysis=with_analysis)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result)
+    return result
 
 
 # ── 多模态识谱 ──

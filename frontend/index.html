@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=online1">
+<link rel="stylesheet" href="style.css?v=lib1">
 </head>
 <body>
 <div class="app-shell">
@@ -231,6 +231,25 @@
     </details>
 
     <details class="tool-block" open>
+      <summary>名局 · 残局库</summary>
+      <p class="tool-hint">经典名谱跟练、残局自己下或 AI 代下、战术杀型体验</p>
+      <div class="lib-filters" id="lib-filters">
+        <button type="button" class="lib-filter active" data-cat="">全部</button>
+        <button type="button" class="lib-filter" data-cat="game">名局</button>
+        <button type="button" class="lib-filter" data-cat="endgame">残局</button>
+        <button type="button" class="lib-filter" data-cat="puzzle">战术</button>
+      </div>
+      <div class="lib-actions">
+        <button id="btn-lib-step" type="button" disabled>名谱下一步</button>
+        <button id="btn-lib-auto" class="accent" type="button" disabled>自动演示名谱</button>
+        <button id="btn-lib-ai" type="button" disabled>AI 代下此局</button>
+        <button id="btn-lib-stop" type="button" disabled>停止演示</button>
+      </div>
+      <p id="lib-status" class="tool-hint"></p>
+      <div id="library-list" class="library-list"></div>
+    </details>
+
+    <details class="tool-block" open>
       <summary>路演 Demo</summary>
       <p class="tool-hint">一键加载高争议局面并跑 Council</p>
       <div id="demo-buttons" class="demo-buttons"></div>
@@ -286,6 +305,6 @@
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=online1"></script>
+<script src="app.js?v=lib1"></script>
 </body>
 </html>
