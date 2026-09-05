@@ -22,6 +22,7 @@ orchestrator = ChessMindOrchestrator()
 class MoveRequest(BaseModel):
     uci: str
     with_analysis: bool | None = None
+    analysis_mode: Literal["fast", "deep"] | None = None
 
 
 class NewGameRequest(BaseModel):
@@ -30,6 +31,7 @@ class NewGameRequest(BaseModel):
     white_ai: Literal["llm", "engine"] = "llm"
     engine_depth: int | None = Field(default=None, ge=1, le=25)
     with_analysis: bool = True
+    analysis_mode: Literal["fast", "deep"] = "fast"
     coach_level: Literal["beginner", "intermediate", "advanced"] = "intermediate"
 
 
@@ -87,6 +89,7 @@ async def new_game(request: Request):
         engine_depth=req.engine_depth,
         with_analysis=req.with_analysis,
         coach_level=req.coach_level,
+        analysis_mode=req.analysis_mode,
     )
     return {"status": "ok", **state}
 
@@ -96,7 +99,11 @@ async def make_move(req: MoveRequest):
     if orchestrator.mode != "human_vs_human":
         if orchestrator.current_controller() != "human":
             raise HTTPException(status_code=400, detail="当前不是人类行棋回合")
-    result = await orchestrator.make_move(req.uci, with_analysis=req.with_analysis)
+    result = await orchestrator.make_move(
+        req.uci,
+        with_analysis=req.with_analysis,
+        analysis_mode=req.analysis_mode,
+    )
     if result is None or "error" in result:
         raise HTTPException(status_code=400, detail=result)
     return result

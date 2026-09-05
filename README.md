@@ -11,6 +11,8 @@
 - **完整对局循环**：人人分析 / 人 vs AI / AI vs AI
 - **算法对抗**：LLM 合法着法选着 vs Stockfish；非法着法自动回退引擎
 - **ChessCouncil 流水线**：结构化 JSON 意见 → 争议度 → 辩论（可选）→ 仲裁 → 教练讲解
+- **快评 / 深评**：快评只出三方意见+教练；深评才触发分歧辩论
+- **着法列表与回放**：机机象棋式着法条、方向键 / 按钮回放；复盘曲线可点跳转
 - **走子轨迹**：半透明起点 + 虚线路径 + 终点高亮（JJ 风格）
 - **路演 Demo**：希腊赠礼等高争议局面一键 Council
 - **赛后复盘**：争议步、辩论次数、叙事与 PGN
@@ -60,12 +62,15 @@ python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env        # 填入 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
-python -m src.main
+# 推荐：只保留一个 8000，避免旧进程导致接口 404
+chmod +x scripts/run_dev.sh
+./scripts/run_dev.sh
+# 或：python -m src.main
 ```
 
 打开 http://127.0.0.1:8000  
 
-**局域网联机（两部手机）：** 电脑执行 `HOST=0.0.0.0 python -m src.main`，手机访问 `http://<电脑局域网IP>:8000`，点「创建房间」→「复制链接」发给对方。
+**局域网联机（两部手机）：** 电脑执行 `HOST=0.0.0.0 ./scripts/run_dev.sh`（或 `HOST=0.0.0.0 python -m src.main`），手机访问 `http://<电脑局域网IP>:8000`，点「创建房间」→「复制链接」发给对方。
 
 ### Docker 一键部署
 

@@ -35,6 +35,14 @@ def build_eval_curve(move_records: list[dict[str, Any]]) -> list[dict[str, Any]]
     >0 白优（零线上方），<0 黑优（零线下方）。
     不逐手取样，只保留开局、终局与跨度较大的转折点，便于看整体趋势。
     """
+    start_fen = None
+    for rec in move_records:
+        move = rec.get("move") or {}
+        if move.get("san") in (None, "", "局面分析", "终局复盘") or rec.get("position_only"):
+            continue
+        start_fen = rec.get("fen_before")
+        break
+
     points: list[dict[str, Any]] = [
         {
             "ply": 0,
@@ -43,6 +51,7 @@ def build_eval_curve(move_records: list[dict[str, Any]]) -> list[dict[str, Any]]
             "black_win": 50.0,
             "advantage": 0.0,
             "classification": None,
+            "fen": start_fen,
         }
     ]
     for rec in move_records:
@@ -64,6 +73,7 @@ def build_eval_curve(move_records: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "black_win": round(100.0 - white_win, 1),
                 "advantage": round(white_win - 50.0, 1),
                 "classification": (rec.get("evaluation") or {}).get("classification"),
+                "fen": rec.get("fen"),
             }
         )
     return _thin_eval_curve(points)

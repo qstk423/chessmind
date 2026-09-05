@@ -42,6 +42,12 @@ let libraryAutoTimer = null;
 let libraryFilter = '';
 let currentLibraryHasScript = false;
 
+/** 本局着法回放（机机象棋式着法列表） */
+const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+let plyLog = []; // {number,san,uci,fen,classification?}
+let viewPly = 0; // 0=开局，n=第 n 步后
+let browsingHistory = false;
+
 const PIECE_GLYPH = {
   K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '♙',
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
@@ -153,6 +159,7 @@ function initBoard() {
 
 function humanMayMove() {
   if (busy || serverState.is_game_over) return false;
+  if (browsingHistory) return false;
   if (online.active) {
     if (!online.color) return false;
     const my = online.color === 'white' ? 'w' : 'b';
@@ -162,6 +169,141 @@ function humanMayMove() {
   if (serverState.mode === 'human_vs_human') return true;
   // human_vs_ai：仅人类回合
   return serverState.controller === 'human';
+}
+
+function syncPlyLogFromMoves(moves) {
+  plyLog = (moves || []).map((m) => ({
+    number: m.number,
+    san: m.san,
+    uci: m.uci,
+    fen: m.fen,
+    classification: m.classification || null,
+  }));
+  viewPly = plyLog.length;
+  browsingHistory = false;
+  renderMoveList();
+  updatePlyNavLabel();
+}
+
+function appendPlyFromMove(data) {
+  const move = data && data.move;
+  if (!move || !move.uci || move.uci.length < 4) return;
+  const cls = (data.evaluation && data.evaluation.classification) || null;
+  plyLog.push({
+    number: move.number || plyLog.length + 1,
+    san: move.san,
+    uci: move.uci,
+    fen: data.fen,
+    classification: cls,
+  });
+  viewPly = plyLog.length;
+  browsingHistory = false;
+  renderMoveList();
+  updatePlyNavLabel();
+}
+
+function renderMoveList() {
+  const box = $('#move-list');
+  if (!box.length) return;
+  if (!plyLog.length) {
+    box.html('<span class="move-list-empty">尚无着法</span>');
+    return;
+  }
+  let html = '';
+  for (let i = 0; i < plyLog.length; i += 2) {
+    const w = plyLog[i];
+    const b = plyLog[i + 1];
+    const round = Math.floor(i / 2) + 1;
+    html += `<span class="move-round">${round}.</span>`;
+    html += plyChip(w, i + 1);
+    if (b) html += plyChip(b, i + 2);
+  }
+  box.html(html);
+}
+
+function plyChip(entry, plyIndex) {
+  const active = viewPly === plyIndex ? ' is-active' : '';
+  const cls = entry.classification ? ` cls-${escapeHtml(entry.classification)}` : '';
+  return `<button type="button" class="move-ply${active}${cls}" data-ply="${plyIndex}">${escapeHtml(entry.san)}</button>`;
+}
+
+function updatePlyNavLabel() {
+  const label = $('#ply-nav-label');
+  if (!label.length) return;
+  if (viewPly <= 0) {
+    label.text(browsingHistory ? '回放 · 开局' : '开局');
+  } else {
+    const m = plyLog[viewPly - 1];
+    label.text(
+      (browsingHistory ? '回放 · ' : '') +
+        `第${viewPly}步 ${m ? m.san : ''}`
+    );
+  }
+}
+
+function gotoPly(ply, { fromBrowse = true } = {}) {
+  const max = plyLog.length;
+  const target = Math.max(0, Math.min(max, ply));
+  viewPly = target;
+  browsingHistory = fromBrowse && target < max;
+  const fen = target === 0 ? START_FEN : (plyLog[target - 1] && plyLog[target - 1].fen);
+  if (!fen) return;
+  game.load(fen);
+  board.position(fen, false);
+  selectedSquare = null;
+  clearHighlights();
+  if (target > 0) {
+    const m = plyLog[target - 1];
+    if (m && m.uci && m.uci.length >= 4) {
+      markLastMove(m.uci.slice(0, 2), m.uci.slice(2, 4));
+    }
+  } else {
+    lastMoveFrom = null;
+    lastMoveTo = null;
+    paintLastMoveMarkers();
+  }
+  renderMoveList();
+  updatePlyNavLabel();
+  if (browsingHistory) {
+    $('#ai-meta').text('回放中 · 点「|&gt;」回到最新后再走棋');
+  }
+  updateStatus();
+}
+
+function jumpToFen(fen, meta) {
+  if (meta && meta.ply === 0) {
+    gotoPly(0);
+    return;
+  }
+  if (fen && (fen === START_FEN || fen.startsWith('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR'))) {
+    gotoPly(0);
+    return;
+  }
+  if (fen) {
+    const idx = plyLog.findIndex((m) => m.fen === fen);
+    if (idx >= 0) {
+      gotoPly(idx + 1);
+      return;
+    }
+  }
+  if (meta && meta.ply != null) {
+    const byNum = plyLog.findIndex((m) => m.number === meta.ply);
+    if (byNum >= 0) {
+      gotoPly(byNum + 1);
+      return;
+    }
+  }
+  if (!fen) return;
+  game.load(fen);
+  board.position(fen, false);
+  browsingHistory = true;
+  selectedSquare = null;
+  clearHighlights();
+  $('#ai-meta').text(
+    meta && meta.san
+      ? `复盘跳转 · ${meta.san}（白优 ${meta.advantage > 0 ? '+' : ''}${meta.advantage}%）`
+      : '复盘跳转'
+  );
 }
 
 function handleSquareClick(square) {
@@ -236,10 +378,15 @@ async function submitHumanMove(uci) {
     const h2h = serverState.mode === 'human_vs_human';
     const blockOnCouncil = useCouncil && !h2h;
     if (blockOnCouncil) setProgress('Council 开会中', { cycleCouncil: true });
+    const analysisMode = $('#analysis-mode').val() || 'fast';
     const r = await fetch(`${API}/game/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uci, with_analysis: blockOnCouncil }),
+      body: JSON.stringify({
+        uci,
+        with_analysis: blockOnCouncil,
+        analysis_mode: analysisMode,
+      }),
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -313,6 +460,7 @@ async function syncFromServer() {
   clearHighlights();
   // 同步时若无逐步信息，保留或清除上一步标记
   paintLastMoveMarkers();
+  syncPlyLogFromMoves(state.moves);
   updateStatus();
 }
 
@@ -451,6 +599,7 @@ function applyMoveResult(data) {
   } else if (data.move && data.move.san) {
     $('#ai-meta').text(`人类 ${data.move.san}`);
   }
+  appendPlyFromMove(data);
   if (data.game_over) {
     stopAuto();
     if (!data.skip_finale) {
@@ -792,6 +941,7 @@ function refreshModeControls() {
   const humanField = $('#human-color').closest('.field');
   const whiteAiField = $('#white-ai').closest('.field');
   const councilField = $('#with-analysis').closest('.field');
+  const analysisModeField = $('#analysis-mode-field');
   $('#human-color').prop('disabled', mode !== 'human_vs_ai');
   $('#white-ai').prop('disabled', mode !== 'ai_vs_ai');
   // PC 上隐藏无关控件，避免功能栏显得错乱
@@ -799,17 +949,20 @@ function refreshModeControls() {
     humanField.removeAttr('hidden');
     whiteAiField.attr('hidden', true);
     councilField.removeAttr('hidden');
+    analysisModeField.removeAttr('hidden');
     $('#with-analysis').prop('disabled', false);
   } else if (mode === 'ai_vs_ai') {
     humanField.attr('hidden', true);
     whiteAiField.removeAttr('hidden');
     councilField.removeAttr('hidden');
+    analysisModeField.removeAttr('hidden');
     $('#with-analysis').prop('disabled', false);
   } else {
     // 人人局：对局中不实时 Council，终局统一生成
     humanField.attr('hidden', true);
     whiteAiField.attr('hidden', true);
     councilField.attr('hidden', true);
+    analysisModeField.attr('hidden', true);
     $('#ai-meta').text('人人局 · 对局中不实时评价，结束后统一生成复盘');
   }
 }
@@ -823,6 +976,7 @@ function newGamePayload() {
     engine_depth: parseInt($('#engine-depth').val(), 10),
     // 人人局永不实时 Council
     with_analysis: mode === 'human_vs_human' ? false : $('#with-analysis').is(':checked'),
+    analysis_mode: $('#analysis-mode').val() || 'fast',
     coach_level: $('#coach-level').val(),
   };
 }
@@ -844,6 +998,12 @@ function resetPanels() {
   $('.tab-content').html('<p class="placeholder">对局进行中…</p>');
   $('#tab-summary').addClass('active');
   $('#ai-meta').text('人 vs AI · 走棋后看 Council 怎么吵');
+  plyLog = [];
+  viewPly = 0;
+  browsingHistory = false;
+  renderMoveList();
+  updatePlyNavLabel();
+  analysisGen += 1;
   updateStatus();
 }
 
@@ -959,6 +1119,24 @@ function startAuto() {
 }
 
 $('#btn-new-game').click(() => startNewGame());
+$('#btn-ply-start').click(() => gotoPly(0));
+$('#btn-ply-prev').click(() => gotoPly(viewPly - 1));
+$('#btn-ply-next').click(() => gotoPly(viewPly + 1));
+$('#btn-ply-end').click(() => gotoPly(plyLog.length));
+$(document).on('click', '.move-ply', function () {
+  const ply = parseInt($(this).attr('data-ply'), 10);
+  if (!Number.isNaN(ply)) gotoPly(ply);
+});
+$(document).on('keydown', (e) => {
+  if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    gotoPly(viewPly - 1);
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    gotoPly(viewPly + 1);
+  }
+});
 $('#btn-undo').click(async () => {
   if (busy || online.active) return;
   analysisGen += 1;
@@ -977,6 +1155,7 @@ $('#btn-undo').click(async () => {
     board.position(data.fen, false);
     selectedSquare = null;
     clearHighlights();
+    syncPlyLogFromMoves(data.moves);
     const hist = game.history({ verbose: true });
     if (hist.length) {
       const last = hist[hist.length - 1];
@@ -1098,15 +1277,16 @@ function renderEvalCurveChart(curve) {
   const dots = curve.map((p, i) => {
     const cx = xScale(i);
     const cy = yScale(p.advantage);
-    const title = `第${p.ply}步 ${p.san || ''} · 白 ${p.white_win}% / 黑 ${p.black_win}%`;
-    return `<circle class="eval-dot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3.2"><title>${escapeHtml(title)}</title></circle>`;
+    const title = `第${p.ply}步 ${p.san || ''} · 白 ${p.white_win}% / 黑 ${p.black_win}%（点击跳转）`;
+    const fenAttr = p.fen ? ` data-fen="${escapeHtml(p.fen)}"` : '';
+    return `<circle class="eval-dot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4.5" data-ply="${escapeHtml(String(p.ply))}" data-san="${escapeHtml(p.san || '')}" data-adv="${escapeHtml(String(p.advantage))}"${fenAttr} style="cursor:pointer"><title>${escapeHtml(title)}</title></circle>`;
   }).join('');
 
   return `
     <div class="eval-curve-panel">
       <div class="eval-curve-head">
         <strong>胜率走势</strong>
-        <span>关键节点连线 · 零线上白优 / 下黑优 · ${escapeHtml(tip)}</span>
+        <span>关键节点连线 · 点圆点跳转局面 · ${escapeHtml(tip)}</span>
       </div>
       <svg class="eval-curve-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="白黑胜率折线图">
         <defs>
@@ -1131,6 +1311,20 @@ function renderEvalCurveChart(curve) {
       </svg>
     </div>`;
 }
+
+$(document).on('click', '.eval-dot', function () {
+  const fen = $(this).attr('data-fen') || null;
+  const ply = parseInt($(this).attr('data-ply'), 10);
+  const san = $(this).attr('data-san');
+  const advantage = parseFloat($(this).attr('data-adv'));
+  jumpToFen(fen, {
+    ply: Number.isNaN(ply) ? null : ply,
+    san,
+    advantage: Number.isNaN(advantage) ? 0 : advantage,
+  });
+  // 跳转后滚回棋盘
+  document.getElementById('board')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
 
 async function openPitchReviewAndLogs() {
   switchWorkspace('more');

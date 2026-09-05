@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=play8">
+<link rel="stylesheet" href="style.css?v=play9">
 </head>
 <body>
 <div class="app-shell">
@@ -49,6 +49,14 @@
         <button id="btn-pause" type="button" disabled>暂停</button>
         <button id="btn-review" type="button">复盘</button>
       </div>
+      <div class="ply-nav" aria-label="着法回放">
+        <button id="btn-ply-start" type="button" title="开局">|&lt;</button>
+        <button id="btn-ply-prev" type="button" title="上一步">&lt;</button>
+        <button id="btn-ply-next" type="button" title="下一步">&gt;</button>
+        <button id="btn-ply-end" type="button" title="最新">|&gt;</button>
+        <span id="ply-nav-label" class="ply-nav-label">开局</span>
+      </div>
+      <div id="move-list" class="move-list" aria-label="着法列表"></div>
       <p id="ai-meta" class="ai-meta">人 vs AI · 走棋后看 Council 怎么吵</p>
     </section>
 
@@ -159,6 +167,13 @@
         <label class="field check">
           <input type="checkbox" id="with-analysis" checked>
           <span>Council</span>
+        </label>
+        <label class="field" id="analysis-mode-field">
+          <span>分析</span>
+          <select id="analysis-mode">
+            <option value="fast" selected>快评</option>
+            <option value="deep">深评</option>
+          </select>
         </label>
       </div>
       <details class="inline-advanced">
@@ -337,6 +352,6 @@
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=play8"></script>
+<script src="app.js?v=play9"></script>
 </body>
 </html>

@@ -34,6 +34,7 @@ from src.storage import upsert_game
 from src.llm_logger import new_game_id, set_context
 
 GameMode = Literal["human_vs_human", "human_vs_ai", "ai_vs_ai"]
+AnalysisMode = Literal["fast", "deep"]
 
 
 class ChessMindOrchestrator:
@@ -50,6 +51,7 @@ class ChessMindOrchestrator:
         self.engine_depth: int = AI_ENGINE_DEPTH
         self.game_id: str | None = None
         self.with_analysis: bool = True
+        self.analysis_mode: AnalysisMode = "fast"
         self.coach_level: CoachLevel = (
             COACH_LEVEL if COACH_LEVEL in ("beginner", "intermediate", "advanced") else "intermediate"
         )
@@ -96,6 +98,7 @@ class ChessMindOrchestrator:
         engine_depth: int | None = None,
         with_analysis: bool = True,
         coach_level: CoachLevel | None = None,
+        analysis_mode: AnalysisMode = "fast",
     ) -> dict:
         self.game.reset()
         self.mode = mode
@@ -103,6 +106,7 @@ class ChessMindOrchestrator:
         self.white_ai = white_ai
         self.engine_depth = engine_depth if engine_depth is not None else AI_ENGINE_DEPTH
         self.with_analysis = with_analysis
+        self.analysis_mode = analysis_mode if analysis_mode in ("fast", "deep") else "fast"
         if coach_level in ("beginner", "intermediate", "advanced"):
             self.coach_level = coach_level
         self.game_id = new_game_id()
@@ -331,7 +335,9 @@ class ChessMindOrchestrator:
     def current_controller(self) -> Literal["human", "llm", "engine"]:
         return self._side_controller(self.game.board.turn)
 
-    async def make_move(self, uci: str, *, with_analysis: bool | None = None) -> dict | None:
+    async def make_move(self, uci: str, *, with_analysis: bool | None = None, analysis_mode: AnalysisMode | None = None) -> dict | None:
+        if analysis_mode in ("fast", "deep"):
+            self.analysis_mode = analysis_mode
         analyze = self.with_analysis if with_analysis is None else with_analysis
         return await self.analyze_move(self.game, uci, with_analysis=analyze)
 
@@ -391,7 +397,9 @@ class ChessMindOrchestrator:
         eval_after: dict,
         move_class: str,
         diverge_roles: bool = False,
+        analysis_mode: AnalysisMode | None = None,
     ) -> dict:
+        mode = analysis_mode or self.analysis_mode
         ctx = grounding
         if diverge_roles:
             from src.council.demos import DIVERGE_HINT
@@ -422,6 +430,11 @@ class ChessMindOrchestrator:
                     disagreement["badge"] = "🔥 路演争议"
                     disagreement["label"] = "Demo 强制辩论（角色推荐不一致）"
                     disagreement["level"] = "clear"
+
+        # 快评：三方意见 + 教练，不跑交叉质询辩论（路演 Demo 除外）
+        if mode == "fast" and not diverge_roles:
+            disagreement["trigger_debate"] = False
+            disagreement["fast_mode"] = True
 
         debate_payload = None
         if disagreement["trigger_debate"] and LLM_ENABLED:
@@ -455,12 +468,18 @@ class ChessMindOrchestrator:
             )
         else:
             verdict = consensus_verdict(opinions, eval_after)
-            debate_payload = {"triggered": False, "rounds": [], "verdict": verdict.to_dict()}
+            debate_payload = {
+                "triggered": False,
+                "rounds": [],
+                "verdict": verdict.to_dict(),
+                "skipped_reason": "fast_mode" if mode == "fast" and not diverge_roles else None,
+            }
 
         snapshot = (
             f"分歧：{disagreement}\n"
             f"战术：{tac_o.to_dict()}\n战略：{strat_o.to_dict()}\n风险：{risk_o.to_dict()}\n"
-            f"裁决：{verdict.to_dict()}\n辩论触发：{debate_payload.get('triggered')}"
+            f"裁决：{verdict.to_dict()}\n辩论触发：{debate_payload.get('triggered')}\n"
+            f"分析模式：{mode}"
         )
         coach_o = await self.coach.explain(
             fen=fen,
@@ -490,6 +509,7 @@ class ChessMindOrchestrator:
                 "debate": debate_payload,
                 "verdict": verdict.to_dict(),
                 "coach_level": self.coach_level,
+                "analysis_mode": mode,
             },
         }
         return analysis
@@ -509,13 +529,18 @@ class ChessMindOrchestrator:
         mover_is_white = game.board.turn == chess.WHITE
         set_context(game_id=self.game_id, move_number=game.move_count + 1)
 
-        eval_before = await self.evaluator.evaluate(game.fen)
+        # 人人局对局中只用浅层引擎评分（终局复盘再吃缓存）；其它模式用配置深度
+        eval_depth = None
+        if self.mode == "human_vs_human" and not with_analysis:
+            eval_depth = min(8, self.engine_depth)
+
+        eval_before = await self.evaluator.evaluate(game.fen, depth=eval_depth)
 
         record = game.push_move(uci)
         if record is None:
             return {"error": "走子执行失败"}
 
-        eval_after = await self.evaluator.evaluate(game.fen)
+        eval_after = await self.evaluator.evaluate(game.fen, depth=eval_depth)
         move_class = self.evaluator.classify_move(eval_before, eval_after, mover_is_white)
 
         record.eval_before = eval_before["score_cp"]
@@ -581,6 +606,7 @@ class ChessMindOrchestrator:
                         "council": analysis.get("council"),
                     },
                     "fen": result["fen"],
+                    "fen_before": record.fen_before,
                 }
             )
         if game is self.game:
@@ -613,6 +639,7 @@ class ChessMindOrchestrator:
                         },
                         "analysis": {"summary": None, "council": None},
                         "fen": rec.fen_after,
+                        "fen_before": rec.fen_before,
                     }
                 )
 
@@ -774,6 +801,7 @@ class ChessMindOrchestrator:
             "white_ai": self.white_ai,
             "engine_depth": self.engine_depth,
             "with_analysis": self.with_analysis,
+            "analysis_mode": self.analysis_mode,
             "coach_level": self.coach_level,
             "game_id": self.game_id,
             "turn": "white" if self.game.board.turn == chess.WHITE else "black",
@@ -784,4 +812,14 @@ class ChessMindOrchestrator:
             "llm_model": LLM_MODEL,
             "product": "ChessCouncil",
             "library": self.library_progress(),
+            "moves": [
+                {
+                    "number": r.move_number,
+                    "san": r.san,
+                    "uci": r.uci,
+                    "fen": r.fen_after,
+                    "fen_before": r.fen_before,
+                }
+                for r in self.game.move_history
+            ],
         }
