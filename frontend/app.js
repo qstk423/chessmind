@@ -1,5 +1,7 @@
 // ChessMind 前端逻辑——人机 / AI vs AI 算法对抗
 const API = '/api';
+const PREFS_KEY = 'cc_prefs_v1';
+const ADMIN_TOKEN_KEY = 'cc_admin_token';
 let board = null;
 let game = new Chess();
 let orientation = 'white';
@@ -52,6 +54,78 @@ let challengeState = {
   goal: '',
   humanColor: 'white',
 };
+
+function showToast(msg, kind = 'info') {
+  const host = document.getElementById('toast-host');
+  if (!host || !msg) return;
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind === 'error' ? ' is-error' : '');
+  el.textContent = String(msg);
+  host.appendChild(el);
+  setTimeout(() => el.remove(), 4200);
+}
+
+function setOpsBanner(text, warn = false) {
+  const el = $('#ops-banner');
+  if (!text) {
+    el.prop('hidden', true).text('');
+    return;
+  }
+  el.prop('hidden', false).text(text).toggleClass('is-warn', !!warn);
+}
+
+function adminHeaders() {
+  const token = (localStorage.getItem(ADMIN_TOKEN_KEY) || '').trim();
+  return token ? { 'X-Admin-Token': token } : {};
+}
+
+function loadPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function savePrefs() {
+  const prefs = {
+    mode: $('#game-mode').val(),
+    humanColor: $('#human-color').val(),
+    withAnalysis: $('#with-analysis').prop('checked'),
+    analysisMode: $('#analysis-mode').val(),
+    coachLevel: $('#coach-level').val(),
+  };
+  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+}
+
+function applyPrefs() {
+  const p = loadPrefs();
+  if (p.mode) $('#game-mode').val(p.mode);
+  if (p.humanColor) $('#human-color').val(p.humanColor);
+  if (typeof p.withAnalysis === 'boolean') $('#with-analysis').prop('checked', p.withAnalysis);
+  if (p.analysisMode) $('#analysis-mode').val(p.analysisMode);
+  if (p.coachLevel) $('#coach-level').val(p.coachLevel);
+}
+
+async function apiFetch(url, options = {}) {
+  const opts = { ...options };
+  const headers = { ...(opts.headers || {}), ...adminHeaders() };
+  opts.headers = headers;
+  let r;
+  try {
+    r = await fetch(url, opts);
+  } catch (err) {
+    showToast('网络错误，请检查服务是否在运行', 'error');
+    throw err;
+  }
+  if (r.status === 429) {
+    const data = await r.json().catch(() => ({}));
+    showToast(data.detail || '请求过于频繁，请稍后再试', 'error');
+  } else if (r.status >= 500) {
+    showToast('服务器繁忙，请稍后重试', 'error');
+  }
+  return r;
+}
 let challengeLevelsCache = [];
 
 /** 本局着法回放（机机象棋式着法列表） */
@@ -1228,7 +1302,11 @@ $('#btn-ai-step').click(async () => {
 });
 $('#btn-auto').click(() => startAuto());
 $('#btn-pause').click(() => stopAuto());
-$('#game-mode').change(refreshModeControls);
+$('#game-mode').change(() => {
+  refreshModeControls();
+  savePrefs();
+});
+$('#human-color, #with-analysis, #analysis-mode, #coach-level').on('change', savePrefs);
 
 $('#btn-review').click(async () => {
   try {
@@ -1494,7 +1572,15 @@ $('#btn-show-logs').click(() => {
 async function refreshLogs() {
   const box = $('#logs-list');
   try {
-    const data = await fetch(`${API}/logs/recent?limit=15`).then((r) => r.json());
+    const r = await apiFetch(`${API}/logs/recent?limit=15`);
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 403) {
+      box.html(
+        '<div class="history-empty">日志需管理口令。在控制台执行：' +
+          '<code>localStorage.setItem("cc_admin_token","你的ADMIN_TOKEN")</code></div>'
+      );
+      return;
+    }
     const logs = data.logs || [];
     if (!logs.length) {
       box.html('<div class="history-empty">尚无调用记录（跑一次 Demo 后刷新）</div>');
@@ -1526,7 +1612,12 @@ $('#btn-refresh-logs').click(() => refreshLogs());
 $('#btn-ping-llm').click(async () => {
   setProgress('Ping LLM…');
   try {
-    const h = await fetch(`${API}/health?ping_llm=true`).then((r) => r.json());
+    const r = await apiFetch(`${API}/health?ping_llm=true`);
+    const h = await r.json().catch(() => ({}));
+    if (r.status === 403) {
+      showToast('Ping 需要管理口令（localStorage cc_admin_token）', 'error');
+      return;
+    }
     $('#llm-status').text(
       `模型：${h.llm_model || '?'} · ping ${h.llm_ping || '?'} · 引擎${h.stockfish ? '就绪' : '降级'}`
     );
@@ -2625,6 +2716,8 @@ $('#btn-room-leave').click(() => leaveOnlineRoom());
 
 $(document).ready(async () => {
   initBoard();
+  applyPrefs();
+  refreshModeControls();
   $(window).on('resize', () => {
     if (lastMoveFrom && lastMoveTo) paintLastMoveMarkers();
   });
@@ -2646,10 +2739,21 @@ $(document).ready(async () => {
     $('#llm-status').text(
       `模型：${h.llm_model || '?'} · ${h.llm_enabled ? '已启用' : '未配置 Key'} · 引擎${h.stockfish ? '就绪' : '降级'}`
     );
+    if (!h.llm_enabled && !h.stockfish) {
+      setOpsBanner('当前为完全降级模式：未配置 LLM，且 Stockfish 未连接。仍可点棋与看界面，分析会跳过。', true);
+    } else if (!h.llm_enabled) {
+      setOpsBanner('未配置 LLM_API_KEY：走子与引擎评分可用，Council / 识谱 / LLM 选着会跳过。');
+    } else if (!h.stockfish) {
+      setOpsBanner('Stockfish 未连接：分析与评分将降级。' + (h.stockfish_error ? `（${h.stockfish_error}）` : ''), true);
+    } else {
+      setOpsBanner('');
+    }
     if (!h.stockfish && h.stockfish_error) {
       $('#ai-meta').text('Stockfish 未连接（已降级）：' + h.stockfish_error);
     }
   } catch (_) {
     $('#llm-status').text('无法连接后端 /api/health');
+    setOpsBanner('无法连接后端。请确认服务已在 8000 端口启动。', true);
+    showToast('无法连接后端 /api/health', 'error');
   }
 });

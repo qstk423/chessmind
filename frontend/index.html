@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=play10">
+<link rel="stylesheet" href="style.css?v=launch1">
 </head>
 <body>
 <div class="app-shell">
@@ -28,6 +28,8 @@
   </header>
 
   <p id="pitch-cue" class="pitch-cue" hidden></p>
+  <p id="ops-banner" class="ops-banner" hidden role="status"></p>
+  <div id="toast-host" class="toast-host" aria-live="polite"></div>
 
   <div id="council-progress" class="council-progress" hidden>
     <span class="spinner" aria-hidden="true"></span>
@@ -363,6 +365,6 @@
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=play10"></script>
+<script src="app.js?v=launch1"></script>
 </body>
 </html>

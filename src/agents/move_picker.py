@@ -1,13 +1,14 @@
 """大模型选着 Agent——从合法着法中挑选，供算法对抗使用。"""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
 
 from openai import AsyncOpenAI
 
-from src.config import LLM_ENABLED
+from src.config import LLM_ENABLED, LLM_TIMEOUT_SEC
 from src.llm_logger import log_llm_call
 
 MOVE_PICKER_PROMPT = """你是国际象棋对弈 AI。你必须从给定的合法着法列表中选择一步棋。
@@ -62,14 +63,17 @@ class MovePickerAgent:
 
         t0 = time.perf_counter()
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": MOVE_PICKER_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.3,
-                max_tokens=80,
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": MOVE_PICKER_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.3,
+                    max_tokens=80,
+                ),
+                timeout=LLM_TIMEOUT_SEC,
             )
             latency_ms = (time.perf_counter() - t0) * 1000
             usage = getattr(response, "usage", None)

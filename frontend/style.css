@@ -110,6 +110,48 @@ button.ghost:hover {
 }
 .council-progress[hidden] { display: none !important; }
 
+.ops-banner {
+  margin: 0 1.1rem 0.55rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid rgba(210, 176, 106, 0.35);
+  background: rgba(210, 176, 106, 0.12);
+  color: var(--ink-dim);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+.ops-banner.is-warn {
+  border-color: rgba(212, 122, 104, 0.45);
+  background: rgba(212, 122, 104, 0.14);
+  color: #f0d2c8;
+}
+.toast-host {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-width: min(360px, calc(100vw - 2rem));
+  pointer-events: none;
+}
+.toast {
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  background: rgba(22, 50, 39, 0.96);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 0.86rem;
+  animation: toast-in 0.25s ease;
+}
+.toast.is-error { border-color: rgba(212, 122, 104, 0.55); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
 .pitch-cue {
   margin: -4px 0 14px;
   padding: 10px 12px;

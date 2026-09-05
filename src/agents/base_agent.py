@@ -1,12 +1,13 @@
 """Agent 基类——文本分析 + 结构化 JSON 分析（含调用日志）"""
 from __future__ import annotations
 
+import asyncio
 import time
 
 from openai import AsyncOpenAI
 
 from src.agents.schema import AgentOpinion, fallback_opinion, opinion_from_raw
-from src.config import LLM_ENABLED
+from src.config import LLM_ENABLED, LLM_TIMEOUT_SEC
 from src.llm_logger import log_llm_call
 
 
@@ -49,14 +50,17 @@ class BaseAgent:
 
         t0 = time.perf_counter()
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.role_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": self.role_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                ),
+                timeout=LLM_TIMEOUT_SEC,
             )
             latency_ms = (time.perf_counter() - t0) * 1000
             usage = getattr(response, "usage", None)
@@ -101,14 +105,17 @@ class BaseAgent:
             return f"（{label}跳过：未配置 LLM）"
         t0 = time.perf_counter()
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                ),
+                timeout=LLM_TIMEOUT_SEC,
             )
             latency_ms = (time.perf_counter() - t0) * 1000
             usage = getattr(response, "usage", None)

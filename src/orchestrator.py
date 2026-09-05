@@ -23,6 +23,7 @@ from src.config import (
     LLM_API_KEY,
     LLM_BASE_URL,
     LLM_ENABLED,
+    LLM_MAX_CONCURRENT,
     LLM_MODEL,
 )
 from src.council.debate import ArbiterAgent, consensus_verdict, run_debate
@@ -77,6 +78,7 @@ class ChessMindOrchestrator:
         self.coach = CoachAgent(self.llm_client, LLM_MODEL)
         self.arbiter = ArbiterAgent(self.llm_client, LLM_MODEL)
         self.move_picker = MovePickerAgent(self.llm_client, LLM_MODEL)
+        self._council_sem = asyncio.Semaphore(LLM_MAX_CONCURRENT)
 
     async def connect(self):
         if not self._connected:
@@ -402,6 +404,28 @@ class ChessMindOrchestrator:
         }
 
     async def _run_council(
+        self,
+        *,
+        fen: str,
+        history: list[str],
+        grounding: str,
+        eval_after: dict,
+        move_class: str,
+        diverge_roles: bool = False,
+        analysis_mode: AnalysisMode | None = None,
+    ) -> dict:
+        async with self._council_sem:
+            return await self._run_council_locked(
+                fen=fen,
+                history=history,
+                grounding=grounding,
+                eval_after=eval_after,
+                move_class=move_class,
+                diverge_roles=diverge_roles,
+                analysis_mode=analysis_mode,
+            )
+
+    async def _run_council_locked(
         self,
         *,
         fen: str,

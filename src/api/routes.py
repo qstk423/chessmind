@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 from src.board.fen_edit import board_grid, set_square_piece, set_turn
 from src.board.game_state import GameState
 from src.board.vision_fen import fen_from_image_bytes
+from src.config import PGN_MAX_PLIES
 from src.council.demos import list_demos
+from src.guardrails import require_admin
 from src.library.catalog import list_library
 from src.llm_logger import recent_logs
 from src.orchestrator import ChessMindOrchestrator
@@ -354,8 +356,12 @@ async def vision_fen(
 
 
 @router.get("/health")
-async def health(ping_llm: bool = Query(False, description="是否实际 ping 一次大模型")):
+async def health(
+    request: Request,
+    ping_llm: bool = Query(False, description="是否实际 ping 一次大模型"),
+):
     if ping_llm:
+        require_admin(request)
         return await orchestrator.health()
     state = orchestrator.get_state()
     return {
@@ -367,26 +373,34 @@ async def health(ping_llm: bool = Query(False, description="是否实际 ping �
         "game_id": state["game_id"],
         "product": state.get("product", "ChessCouncil"),
         "llm_ping": "not_requested",
+        "public_ready": True,
     }
 
 
 @router.get("/logs/recent")
-def logs_recent(limit: int = Query(20, ge=1, le=200)):
+def logs_recent(request: Request, limit: int = Query(20, ge=1, le=200)):
+    require_admin(request)
     return {"count": limit, "logs": recent_logs(limit)}
 
 
 @router.post("/analyze/pgn")
 async def analyze_pgn(req: PGNRequest):
     game = chess.pgn.read_game(StringIO(req.pgn))
-    if game is None or not list(game.mainline_moves()):
+    moves = list(game.mainline_moves()) if game is not None else []
+    if game is None or not moves:
         raise HTTPException(status_code=400, detail="无法从 PGN 文本中解析出走法")
+    if len(moves) > PGN_MAX_PLIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"PGN 过长（{len(moves)} 半步），上限 {PGN_MAX_PLIES}；请截取关键片段",
+        )
 
     replay = GameState(board=game.board())
     results = []
-    for move in game.mainline_moves():
+    for move in moves:
         analysis = await orchestrator.analyze_move(replay, move.uci())
         if not analysis or "error" in analysis:
             break
         results.append(analysis)
 
-    return {"total_moves": len(results), "moves": results}
+    return {"total_moves": len(results), "moves": results, "capped_at": PGN_MAX_PLIES}

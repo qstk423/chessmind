@@ -81,6 +81,18 @@ docker compose up --build
 
 服务监听 `http://127.0.0.1:8000`；对局库与日志挂载到 named volume。
 
+### 公开展示 / 可上线清单
+
+本项目适合 **单机演示或小范围邀请试用**（进程内共享一盘棋）。公网暴露前请至少：
+
+1. `.env` 设置 `PUBLIC_DEMO=1` 与 `ADMIN_TOKEN=...`
+2. 收紧 `CORS_ORIGINS`（不要用 `*` 配凭证）
+3. 确认 `LLM_TIMEOUT_SEC` / `LLM_MAX_CONCURRENT` / 限流参数
+4. `docker compose up --build`，观察 healthcheck
+5. 跑冒烟：`./scripts/smoke.sh` 或 `pytest -q tests/test_api_smoke.py`
+
+已知边界：多访客会抢同一全局对局；联机房间是独立状态。账号体系 / 多租户不在本阶段范围。
+
 ### `.env` 示例
 
 **开发（阿里云百炼千问）：**

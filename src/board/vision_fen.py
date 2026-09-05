@@ -1,6 +1,7 @@
 """多模态：棋盘照片 / 截图 → FEN（视觉大模型）。"""
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 import time
@@ -9,7 +10,7 @@ from typing import Any, Literal
 import chess
 from openai import AsyncOpenAI
 
-from src.config import LLM_API_KEY, LLM_BASE_URL, LLM_ENABLED, VISION_MODEL
+from src.config import LLM_API_KEY, LLM_BASE_URL, LLM_ENABLED, LLM_TIMEOUT_SEC, VISION_MODEL
 from src.llm_logger import log_llm_call
 
 FEN_PROMPT = """你是国际象棋棋盘视觉识别专家。用户拍了一张实体棋盘或屏幕截图。
@@ -122,19 +123,22 @@ async def fen_from_image_bytes(
 
     t0 = time.perf_counter()
     try:
-        resp = await own_client.chat.completions.create(
-            model=VISION_MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                    ],
-                }
-            ],
-            temperature=0.1,
-            max_tokens=160,
+        resp = await asyncio.wait_for(
+            own_client.chat.completions.create(
+                model=VISION_MODEL,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    }
+                ],
+                temperature=0.1,
+                max_tokens=160,
+            ),
+            timeout=LLM_TIMEOUT_SEC,
         )
         latency_ms = (time.perf_counter() - t0) * 1000
         usage = getattr(resp, "usage", None)
