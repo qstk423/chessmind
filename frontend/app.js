@@ -209,6 +209,7 @@ function handleSquareClick(square) {
 
 async function submitHumanMove(uci) {
   busy = true;
+  clearHintHighlights();
   try {
     if (online.active) {
       if (online.ws && online.ws.readyState === WebSocket.OPEN) {
@@ -231,11 +232,14 @@ async function submitHumanMove(uci) {
     }
 
     const useCouncil = $('#with-analysis').is(':checked');
-    if (useCouncil) setProgress('Council 开会中', { cycleCouncil: true });
+    // 人人局：对局中不跑 AI 评价，终局后统一生成
+    const h2h = serverState.mode === 'human_vs_human';
+    const blockOnCouncil = useCouncil && !h2h;
+    if (blockOnCouncil) setProgress('Council 开会中', { cycleCouncil: true });
     const r = await fetch(`${API}/game/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uci }),
+      body: JSON.stringify({ uci, with_analysis: blockOnCouncil }),
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -245,6 +249,9 @@ async function submitHumanMove(uci) {
       return;
     }
     applyMoveResult(data);
+    if (h2h && data.game_over) {
+      await runPostGameReview();
+    }
     if (!data.game_over && data.next_controller && data.next_controller !== 'human') {
       await sleep(400);
       await runAiStep({ nested: true });
@@ -254,6 +261,45 @@ async function submitHumanMove(uci) {
   } finally {
     setProgress(null);
     busy = false;
+  }
+}
+
+let analysisGen = 0;
+
+async function runPostGameReview() {
+  const gen = ++analysisGen;
+  setProgress('终局复盘生成中…', { cycleCouncil: true });
+  $('#move-class').text('对局结束 · 正在生成统一评价');
+  $('#ai-meta').text('人人局终局复盘生成中…');
+  try {
+    const r = await fetch(`${API}/game/post-review`, { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (gen !== analysisGen) return;
+    if (!r.ok) {
+      $('#ai-meta').text(apiErrorText(data, '终局复盘失败'));
+      return;
+    }
+    const final = data.final_analysis || {};
+    applyMoveResult({
+      ...final,
+      game_over: true,
+      result: data.result || final.result,
+      move: { san: '终局复盘', uci: '', number: 0 },
+      skip_finale: true,
+    });
+    $('#ai-meta').text('人人局 · 终局评价已生成');
+    $('#move-class').text(data.result || '对局结束 · 复盘就绪');
+    // 打开复盘面板
+    try {
+      await showReviewFromData(data.review);
+    } catch (_) {
+      $('#btn-review').click();
+    }
+  } catch (err) {
+    console.error(err);
+    if (gen === analysisGen) $('#ai-meta').text('终局复盘请求失败');
+  } finally {
+    if (gen === analysisGen) setProgress(null);
   }
 }
 
@@ -407,7 +453,9 @@ function applyMoveResult(data) {
   }
   if (data.game_over) {
     stopAuto();
-    showFinale(data.finale || inferFinaleClient(data));
+    if (!data.skip_finale) {
+      showFinale(data.finale || inferFinaleClient(data));
+    }
   }
 }
 
@@ -501,9 +549,29 @@ function highlightLegalMoves(square) {
 }
 
 function clearHighlights() {
-  $('.square-55d63').removeClass('highlight-selected highlight-move highlight-capture');
+  $('.square-55d63').removeClass(
+    'highlight-selected highlight-move highlight-capture highlight-hint highlight-hint-to'
+  );
   // 选中高亮清掉后，把上一步标记画回去
   paintLastMoveMarkers();
+}
+
+function clearHintHighlights() {
+  $('.square-55d63').removeClass('highlight-hint highlight-hint-to');
+}
+
+function showHintSquares(from, to) {
+  clearHintHighlights();
+  if (from) $(`.square-55d63[data-square="${from}"]`).addClass('highlight-hint');
+  if (to) $(`.square-55d63[data-square="${to}"]`).addClass('highlight-hint-to');
+}
+
+function apiErrorText(data, fallback) {
+  const d = data && data.detail;
+  if (typeof d === 'string') return d;
+  if (d && typeof d === 'object' && d.error) return d.error;
+  if (data && data.error) return data.error;
+  return fallback;
 }
 
 function escapeHtml(text) {
@@ -723,28 +791,38 @@ function refreshModeControls() {
   const mode = $('#game-mode').val();
   const humanField = $('#human-color').closest('.field');
   const whiteAiField = $('#white-ai').closest('.field');
+  const councilField = $('#with-analysis').closest('.field');
   $('#human-color').prop('disabled', mode !== 'human_vs_ai');
   $('#white-ai').prop('disabled', mode !== 'ai_vs_ai');
   // PC 上隐藏无关控件，避免功能栏显得错乱
   if (mode === 'human_vs_ai') {
     humanField.removeAttr('hidden');
     whiteAiField.attr('hidden', true);
+    councilField.removeAttr('hidden');
+    $('#with-analysis').prop('disabled', false);
   } else if (mode === 'ai_vs_ai') {
     humanField.attr('hidden', true);
     whiteAiField.removeAttr('hidden');
+    councilField.removeAttr('hidden');
+    $('#with-analysis').prop('disabled', false);
   } else {
+    // 人人局：对局中不实时 Council，终局统一生成
     humanField.attr('hidden', true);
     whiteAiField.attr('hidden', true);
+    councilField.attr('hidden', true);
+    $('#ai-meta').text('人人局 · 对局中不实时评价，结束后统一生成复盘');
   }
 }
 
 function newGamePayload() {
+  const mode = $('#game-mode').val();
   return {
-    mode: $('#game-mode').val(),
+    mode,
     human_color: $('#human-color').val(),
     white_ai: $('#white-ai').val(),
     engine_depth: parseInt($('#engine-depth').val(), 10),
-    with_analysis: $('#with-analysis').is(':checked'),
+    // 人人局永不实时 Council
+    with_analysis: mode === 'human_vs_human' ? false : $('#with-analysis').is(':checked'),
     coach_level: $('#coach-level').val(),
   };
 }
@@ -881,6 +959,72 @@ function startAuto() {
 }
 
 $('#btn-new-game').click(() => startNewGame());
+$('#btn-undo').click(async () => {
+  if (busy || online.active) return;
+  analysisGen += 1;
+  setProgress(null);
+  busy = true;
+  clearHintHighlights();
+  try {
+    const r = await fetch(`${API}/game/undo`, { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      $('#ai-meta').text(apiErrorText(data, '无法悔棋'));
+      return;
+    }
+    applyServerState(data);
+    game.load(data.fen);
+    board.position(data.fen, false);
+    selectedSquare = null;
+    clearHighlights();
+    const hist = game.history({ verbose: true });
+    if (hist.length) {
+      const last = hist[hist.length - 1];
+      markLastMove(last.from, last.to);
+    } else {
+      lastMoveFrom = null;
+      lastMoveTo = null;
+      paintLastMoveMarkers();
+    }
+    updateStatus();
+    $('#ai-meta').text(
+      serverState.mode === 'human_vs_ai'
+        ? '已悔棋 · 回到你的回合'
+        : '已悔棋'
+    );
+    $('#move-class').text('悔棋完成');
+    resetAgentCompare();
+  } catch (err) {
+    console.error(err);
+  } finally {
+    busy = false;
+  }
+});
+$('#btn-hint').click(async () => {
+  if (busy || online.active || serverState.is_game_over) return;
+  if (!humanMayMove() && serverState.mode !== 'human_vs_human') {
+    $('#ai-meta').text('当前不是你的回合');
+    return;
+  }
+  busy = true;
+  $('#ai-meta').text('引擎算提示…');
+  try {
+    const r = await fetch(`${API}/game/hint`, { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      $('#ai-meta').text(apiErrorText(data, '提示失败'));
+      return;
+    }
+    showHintSquares(data.from, data.to);
+    $('#ai-meta').text(`提示 ${data.san}（${data.uci} · 引擎 depth ${data.depth}）`);
+    $('#move-class').text(`引擎提示：${data.san}`);
+  } catch (err) {
+    console.error(err);
+    $('#ai-meta').text('提示请求失败');
+  } finally {
+    busy = false;
+  }
+});
 $('#btn-flip').click(() => {
   orientation = orientation === 'white' ? 'black' : 'white';
   board.orientation(orientation);
@@ -897,30 +1041,96 @@ $('#game-mode').change(refreshModeControls);
 $('#btn-review').click(async () => {
   try {
     const data = await fetch(`${API}/game/review`).then(r => r.json());
-    const narr = (data.narrative || []).map(t => `<li>${escapeHtml(t)}</li>`).join('');
-    const highs = (data.highlights || []).map(h =>
-      `<li>第${escapeHtml(String(h.number))}步 ${escapeHtml(h.san)} · ${escapeHtml(h.classification)} · 争议 ${Math.round((h.disagreement_score || 0) * 100)}%</li>`
-    ).join('');
-    const debates = (data.debates || []).map(d =>
-      `<li>第${escapeHtml(String(d.number))}步 ${escapeHtml(d.san)} → 仲裁 ${escapeHtml(d.verdict || '—')}</li>`
-    ).join('');
-    switchWorkspace('more');
-    $('#review-section').show();
-    const reviewEl = document.getElementById('review-section');
-    if (reviewEl) reviewEl.open = true;
-    $('#review-result').html(`
-      <div class="review-block">
-        <p><strong>${escapeHtml(data.title || '复盘')}</strong> · 共 ${data.total_moves} 步 · 辩论 ${data.debate_count || 0} 次 · 平均争议 ${Math.round((data.avg_disagreement || 0) * 100)}%</p>
-        <p><strong>叙事</strong></p><ul>${narr || '<li>暂无</li>'}</ul>
-        <p><strong>关键局面</strong></p><ul>${highs || '<li>暂无</li>'}</ul>
-        <p><strong>辩论回合</strong></p><ul>${debates || '<li>本局未触发辩论</li>'}</ul>
-        <pre style="white-space:pre-wrap;font-size:0.78rem;opacity:0.8">${escapeHtml(data.pgn || '')}</pre>
-      </div>`);
-    reviewEl?.scrollIntoView({ behavior: 'smooth' });
+    await showReviewFromData(data);
   } catch (e) {
     alert('复盘请求失败');
   }
 });
+
+async function showReviewFromData(data) {
+  if (!data) return;
+  const narr = (data.narrative || []).map(t => `<li>${escapeHtml(t)}</li>`).join('');
+  const highs = (data.highlights || []).map(h =>
+    `<li>第${escapeHtml(String(h.number))}步 ${escapeHtml(h.san)} · ${escapeHtml(h.classification)} · 争议 ${Math.round((h.disagreement_score || 0) * 100)}%</li>`
+  ).join('');
+  const debates = (data.debates || []).map(d =>
+    `<li>第${escapeHtml(String(d.number))}步 ${escapeHtml(d.san)} → 仲裁 ${escapeHtml(d.verdict || '—')}</li>`
+  ).join('');
+  switchWorkspace('more');
+  $('#review-section').show();
+  const reviewEl = document.getElementById('review-section');
+  if (reviewEl) reviewEl.open = true;
+  $('#review-result').html(`
+    <div class="review-block">
+      <p><strong>${escapeHtml(data.title || '复盘')}</strong> · 共 ${data.total_moves} 步 · 辩论 ${data.debate_count || 0} 次 · 平均争议 ${Math.round((data.avg_disagreement || 0) * 100)}%</p>
+      ${renderEvalCurveChart(data.eval_curve || [])}
+      <p><strong>叙事</strong></p><ul>${narr || '<li>暂无</li>'}</ul>
+      <p><strong>关键局面</strong></p><ul>${highs || '<li>暂无</li>'}</ul>
+      <p><strong>辩论回合</strong></p><ul>${debates || '<li>本局未触发辩论</li>'}</ul>
+      <pre style="white-space:pre-wrap;font-size:0.78rem;opacity:0.8">${escapeHtml(data.pgn || '')}</pre>
+    </div>`);
+  reviewEl?.scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderEvalCurveChart(curve) {
+  if (!curve || curve.length < 2) {
+    return `<div class="eval-curve-empty">本局尚无逐步胜率曲线（终局复盘后生成）</div>`;
+  }
+  const W = 640;
+  const H = 220;
+  const pad = { l: 44, r: 16, t: 18, b: 28 };
+  const plotW = W - pad.l - pad.r;
+  const plotH = H - pad.t - pad.b;
+  const n = curve.length;
+  const maxAbs = Math.max(20, ...curve.map((p) => Math.abs(Number(p.advantage) || 0)));
+  const yScale = (adv) => pad.t + plotH / 2 - (Number(adv) / maxAbs) * (plotH / 2);
+  const xScale = (i) => pad.l + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const pts = curve.map((p, i) => `${xScale(i).toFixed(1)},${yScale(p.advantage).toFixed(1)}`);
+  const line = pts.join(' ');
+  const zeroY = yScale(0);
+  // 零线上下分区填充
+  const areaWhite = [`${xScale(0)},${zeroY}`, ...pts, `${xScale(n - 1)},${zeroY}`].join(' ');
+  const last = curve[curve.length - 1];
+  const tip = last.advantage >= 0
+    ? `终局白方优势 +${Math.abs(last.advantage).toFixed(1)}%`
+    : `终局黑方优势 +${Math.abs(last.advantage).toFixed(1)}%`;
+
+  const dots = curve.map((p, i) => {
+    const cx = xScale(i);
+    const cy = yScale(p.advantage);
+    const title = `第${p.ply}步 ${p.san || ''} · 白 ${p.white_win}% / 黑 ${p.black_win}%`;
+    return `<circle class="eval-dot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3.2"><title>${escapeHtml(title)}</title></circle>`;
+  }).join('');
+
+  return `
+    <div class="eval-curve-panel">
+      <div class="eval-curve-head">
+        <strong>胜率走势</strong>
+        <span>关键节点连线 · 零线上白优 / 下黑优 · ${escapeHtml(tip)}</span>
+      </div>
+      <svg class="eval-curve-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="白黑胜率折线图">
+        <defs>
+          <linearGradient id="evalFillWhite" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(239,231,216,0.35)"/>
+            <stop offset="100%" stop-color="rgba(239,231,216,0)"/>
+          </linearGradient>
+          <linearGradient id="evalFillBlack" x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0%" stop-color="rgba(107,124,116,0.4)"/>
+            <stop offset="100%" stop-color="rgba(107,124,116,0)"/>
+          </linearGradient>
+        </defs>
+        <rect x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}" class="eval-plot-bg"/>
+        <line x1="${pad.l}" y1="${zeroY}" x2="${W - pad.r}" y2="${zeroY}" class="eval-zero"/>
+        <text x="${pad.l - 8}" y="${pad.t + 10}" class="eval-axis-label" text-anchor="end">白</text>
+        <text x="${pad.l - 8}" y="${pad.t + plotH}" class="eval-axis-label" text-anchor="end">黑</text>
+        <polyline class="eval-area-guide" points="${areaWhite}" fill="url(#evalFillWhite)" stroke="none"/>
+        <polyline class="eval-line" points="${line}" fill="none"/>
+        ${dots}
+        <text x="${pad.l}" y="${H - 8}" class="eval-axis-label">开局</text>
+        <text x="${W - pad.r}" y="${H - 8}" class="eval-axis-label" text-anchor="end">第${escapeHtml(String(last.ply))}步</text>
+      </svg>
+    </div>`;
+}
 
 async function openPitchReviewAndLogs() {
   switchWorkspace('more');

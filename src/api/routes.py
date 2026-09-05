@@ -131,6 +131,33 @@ async def analyze_position(req: AnalyzePositionRequest | None = None):
     return await orchestrator.analyze_position(with_analysis=with_analysis)
 
 
+@router.post("/game/post-review")
+async def post_game_review():
+    """人人局等：终局后统一生成 Council 评价与复盘。"""
+    result = await orchestrator.post_game_review()
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result)
+    return result
+
+
+@router.post("/game/undo")
+def undo_move():
+    """悔棋（人 vs AI 尽量回到人类回合）。"""
+    result = orchestrator.undo()
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result)
+    return result
+
+
+@router.post("/game/hint")
+async def hint_move():
+    """Stockfish 提示着法（不触发 Council）。"""
+    result = await orchestrator.hint()
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result)
+    return result
+
+
 @router.get("/game/review")
 def game_review():
     """赛后复盘报告（基于本局逐步 Council 缓存）。"""

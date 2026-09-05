@@ -1108,12 +1108,71 @@ button.ghost:hover {
 #pgn-result, #review-result {
   margin-top: 10px;
   font-size: 0.88rem;
-  max-height: 360px;
+  max-height: 520px;
   overflow: auto;
   color: var(--ink-dim);
 }
 
 .review-block li { margin-left: 18px; margin-bottom: 4px; }
+
+.eval-curve-panel {
+  margin: 12px 0 16px;
+  padding: 12px 12px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(12, 31, 23, 0.55);
+}
+.eval-curve-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 0.84rem;
+}
+.eval-curve-head strong {
+  color: var(--ink);
+  font-family: var(--font-display);
+}
+.eval-curve-head span { color: var(--muted); font-size: 0.78rem; }
+.eval-curve-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.eval-plot-bg {
+  fill: rgba(18, 41, 31, 0.65);
+  stroke: rgba(210, 176, 106, 0.18);
+}
+.eval-zero {
+  stroke: rgba(242, 235, 224, 0.45);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 4;
+}
+.eval-line {
+  stroke: var(--gold);
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.eval-dot {
+  fill: #efe7d8;
+  stroke: rgba(210, 176, 106, 0.9);
+  stroke-width: 1.2;
+}
+.eval-axis-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.eval-curve-empty {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(12, 31, 23, 0.4);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
 
 /* ── 终局结算动画 ── */
 .finale-overlay {
@@ -1327,6 +1386,14 @@ button.ghost:hover {
   position: absolute; inset: 0;
   border-radius: 50%;
   box-shadow: inset 0 0 0 5px rgba(196, 92, 74, 0.55);
+}
+.highlight-hint {
+  box-shadow: inset 0 0 0 4px rgba(92, 168, 210, 0.9) !important;
+  z-index: 2;
+}
+.highlight-hint-to {
+  box-shadow: inset 0 0 0 4px rgba(92, 168, 210, 0.95) !important;
+  background-image: radial-gradient(circle at center, rgba(92, 168, 210, 0.35), transparent 62%) !important;
 }
 
 .last-move-to {

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.board.move_evaluator import MoveEvaluator
+
 
 CLASS_SCORE = {
     "brilliant": 3,
@@ -14,8 +16,130 @@ CLASS_SCORE = {
 }
 
 
+def _white_win_pct(after: dict[str, Any] | None) -> float | None:
+    """从引擎 after 评估得到白方胜率百分比。"""
+    if not after:
+        return None
+    wp = after.get("win_prob_white")
+    if isinstance(wp, (int, float)):
+        return round(float(wp) * 100.0, 1)
+    cp = after.get("score_cp")
+    if isinstance(cp, (int, float)):
+        return round(MoveEvaluator._cp_to_win_prob(int(cp)) * 100.0, 1)
+    return None
+
+
+def build_eval_curve(move_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    白方优势曲线（稀疏关键点）：advantage = 白胜率% - 50。
+    >0 白优（零线上方），<0 黑优（零线下方）。
+    不逐手取样，只保留开局、终局与跨度较大的转折点，便于看整体趋势。
+    """
+    points: list[dict[str, Any]] = [
+        {
+            "ply": 0,
+            "san": "开局",
+            "white_win": 50.0,
+            "black_win": 50.0,
+            "advantage": 0.0,
+            "classification": None,
+        }
+    ]
+    for rec in move_records:
+        if rec.get("position_only"):
+            continue
+        move = rec.get("move") or {}
+        san = move.get("san")
+        if san in (None, "", "局面分析", "终局复盘"):
+            continue
+        after = (rec.get("evaluation") or {}).get("after") or {}
+        white_win = _white_win_pct(after)
+        if white_win is None:
+            continue
+        points.append(
+            {
+                "ply": move.get("number") or len(points),
+                "san": san,
+                "white_win": white_win,
+                "black_win": round(100.0 - white_win, 1),
+                "advantage": round(white_win - 50.0, 1),
+                "classification": (rec.get("evaluation") or {}).get("classification"),
+            }
+        )
+    return _thin_eval_curve(points)
+
+
+def _thin_eval_curve(
+    points: list[dict[str, Any]],
+    *,
+    max_points: int = 7,
+    min_swing: float = 8.0,
+    min_ply_gap: int = 3,
+) -> list[dict[str, Any]]:
+    """从逐步点中抽稀疏关键点：大波动 / 漏着妙手 / 开终局。"""
+    if len(points) <= max_points:
+        return points
+
+    important = {"brilliant", "great", "mistake", "blunder"}
+    kept_idx = [0]
+
+    for i in range(1, len(points) - 1):
+        p = points[i]
+        last = points[kept_idx[-1]]
+        swing = abs(float(p["advantage"]) - float(last["advantage"]))
+        ply_gap = int(p.get("ply") or i) - int(last.get("ply") or 0)
+        is_key = p.get("classification") in important
+        if ply_gap >= min_ply_gap and (swing >= min_swing or (is_key and swing >= 4.0)):
+            kept_idx.append(i)
+
+    last_i = len(points) - 1
+    if kept_idx[-1] != last_i:
+        kept_idx.append(last_i)
+
+    # 过密：保留开终局，中间按波动幅度取最显著的若干点
+    if len(kept_idx) > max_points:
+        mid = kept_idx[1:-1]
+        scored = sorted(
+            (
+                abs(float(points[i]["advantage"]) - float(points[max(0, i - 1)]["advantage"]))
+                + abs(float(points[i]["advantage"])) * 0.25,
+                i,
+            )
+            for i in mid
+        )
+        need = max_points - 2
+        mid_keep = sorted(i for _, i in scored[-need:])
+        kept_idx = [0, *mid_keep, last_i]
+
+    # 过稀：等距补点，长对局也能看出走势
+    if len(kept_idx) < min(4, max_points) and len(points) >= 4:
+        target = min(max_points, 5)
+        even = {
+            int(round(j * (len(points) - 1) / (target - 1)))
+            for j in range(target)
+        }
+        kept_idx = sorted(set(kept_idx) | even)[:max_points]
+        if kept_idx[-1] != last_i:
+            kept_idx = sorted(set(kept_idx[:-1] if len(kept_idx) >= max_points else kept_idx) | {0, last_i})
+            if len(kept_idx) > max_points:
+                mid = kept_idx[1:-1]
+                step = len(mid) / max(1, max_points - 2)
+                pick = [mid[min(len(mid) - 1, int(k * step))] for k in range(max_points - 2)]
+                kept_idx = [0, *pick, last_i]
+
+    out: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for i in kept_idx:
+        if i in seen or i < 0 or i >= len(points):
+            continue
+        seen.add(i)
+        out.append(points[i])
+    return out
+
+
 def build_review(move_records: list[dict[str, Any]], *, game_result: str | None, pgn: str) -> dict[str, Any]:
     """根据逐步分析结果生成复盘摘要（不调用 LLM，确定性、可演示）。"""
+    eval_curve = build_eval_curve(move_records)
     if not move_records:
         return {
             "title": "本局复盘",
@@ -27,6 +151,7 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
             "avg_disagreement": 0.0,
             "narrative": ["本局尚无走子记录。"],
             "pgn": pgn,
+            "eval_curve": eval_curve,
         }
 
     counts: dict[str, int] = {}
@@ -116,4 +241,5 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
         "debates": debates,
         "narrative": narrative,
         "pgn": pgn,
+        "eval_curve": eval_curve,
     }

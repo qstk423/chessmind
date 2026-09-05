@@ -335,6 +335,53 @@ class ChessMindOrchestrator:
         analyze = self.with_analysis if with_analysis is None else with_analysis
         return await self.analyze_move(self.game, uci, with_analysis=analyze)
 
+    def undo(self, *, to_human: bool = True) -> dict:
+        """悔棋。人 vs AI 时尽量撤回到人类回合（常为两步）。"""
+        if not self.game.move_history:
+            return {"error": "没有可悔的棋"}
+
+        def _pop_one() -> None:
+            self.game.pop_move()
+            if self.move_analyses:
+                self.move_analyses.pop()
+
+        _pop_one()
+        if (
+            to_human
+            and self.mode == "human_vs_ai"
+            and not self.game.is_game_over
+            and self.game.move_history
+            and self.current_controller() != "human"
+        ):
+            _pop_one()
+
+        state = self.get_state()
+        state["undone"] = True
+        return state
+
+    async def hint(self) -> dict:
+        """引擎提示着法（秒级，不跑 Council）。"""
+        if self.game.is_game_over:
+            return {"error": "对局已结束"}
+        legal = self.game.legal_moves()
+        if not legal:
+            return {"error": "无合法着法"}
+        depth = min(self.engine_depth, 12)
+        uci = await self.evaluator.best_move(self.game.fen, depth=depth)
+        if uci is None or uci not in legal:
+            uci = legal[0]
+        move = chess.Move.from_uci(uci)
+        san = self.game.board.san(move)
+        return {
+            "uci": uci,
+            "san": san,
+            "from": uci[:2],
+            "to": uci[2:4],
+            "source": "engine",
+            "depth": depth,
+            "fen": self.game.fen,
+        }
+
     async def _run_council(
         self,
         *,
@@ -523,8 +570,8 @@ class ChessMindOrchestrator:
             finale = detect_finale(game.board)
             if finale:
                 result["finale"] = finale
-        # 仅主对局缓存复盘材料
-        if game is self.game and with_analysis:
+        # 仅主对局缓存复盘材料（即使跳过 Council 也留下引擎分类，供人人局终局复盘）
+        if game is self.game:
             self.move_analyses.append(
                 {
                     "move": result["move"],
@@ -538,11 +585,52 @@ class ChessMindOrchestrator:
             )
         if game is self.game:
             try:
-                saved = self.persist_game(with_review=bool(game.is_game_over))
+                saved = self.persist_game(with_review=bool(game.is_game_over and with_analysis))
                 result["saved"] = {"id": saved.get("id"), "updated_at": saved.get("updated_at")}
             except Exception as e:
                 result["saved"] = {"error": f"{type(e).__name__}: {e}"}
         return result
+
+    async def post_game_review(self) -> dict:
+        """人人局等：对局结束后统一生成 Council 终局评价 + 复盘。"""
+        if not self.game.is_game_over:
+            return {"error": "对局尚未结束，结束后再生成评价"}
+        if not self.move_analyses and self.game.move_history:
+            # 极端情况：历史里有棋但缓存空，按引擎结果补一条轻量记录
+            for rec in self.game.move_history:
+                self.move_analyses.append(
+                    {
+                        "move": {
+                            "san": rec.san,
+                            "uci": rec.uci,
+                            "number": rec.move_number,
+                        },
+                        "evaluation": {
+                            "before": {"score_cp": rec.eval_before},
+                            "after": {"score_cp": rec.eval_after},
+                            "delta": rec.eval_delta,
+                            "classification": "good",
+                        },
+                        "analysis": {"summary": None, "council": None},
+                        "fen": rec.fen_after,
+                    }
+                )
+
+        set_context(game_id=self.game_id, move_number=self.game.move_count)
+        final = await self.analyze_position(with_analysis=True)
+        review = self.get_review()
+        try:
+            saved = self.persist_game(title=None, with_review=True)
+        except Exception as e:
+            saved = {"error": f"{type(e).__name__}: {e}"}
+        return {
+            "status": "ok",
+            "mode": self.mode,
+            "result": self.game.result,
+            "final_analysis": final,
+            "review": review,
+            "saved": saved,
+        }
 
     async def choose_ai_uci(self) -> dict:
         if self.game.is_game_over:

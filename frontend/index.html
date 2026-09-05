@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=play4">
+<link rel="stylesheet" href="style.css?v=play8">
 </head>
 <body>
 <div class="app-shell">
@@ -41,6 +41,8 @@
       </div>
       <div class="board-controls">
         <button id="btn-new-game" type="button">新对局</button>
+        <button id="btn-undo" type="button" title="撤销上一步（人 vs AI 回到你的回合）">悔棋</button>
+        <button id="btn-hint" type="button" title="引擎提示着法（不跑 Council）">提示</button>
         <button id="btn-flip" type="button">翻转</button>
         <button id="btn-ai-step" class="accent" type="button">AI 一步</button>
         <button id="btn-auto" type="button">自动对战</button>
@@ -130,13 +132,13 @@
 
   <section class="workspace">
     <div class="ws-panel" id="panel-play" data-panel="play">
-      <p class="panel-lead">主路径：人 vs AI，走一步看 Council 怎么吵、教练怎么讲</p>
+      <p class="panel-lead">主路径：人 vs AI 看实时 Council；人人对决则终局再统一评价</p>
       <div class="toolbar">
         <label class="field">
           <span>模式</span>
           <select id="game-mode">
             <option value="human_vs_ai" selected>人 vs AI</option>
-            <option value="human_vs_human">人人分析</option>
+            <option value="human_vs_human">人人对决（终局再评价）</option>
             <option value="ai_vs_ai">AI vs AI</option>
           </select>
         </label>
@@ -335,6 +337,6 @@
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=play4"></script>
+<script src="app.js?v=play8"></script>
 </body>
 </html>

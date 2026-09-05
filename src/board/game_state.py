@@ -94,6 +94,19 @@ class GameState:
             self.result = f"和棋（{reason}）"
         self.result_pgn = outcome.result()
 
+    def pop_move(self) -> MoveRecord | None:
+        """悔棋：撤销最后一步，返回被撤销的记录。"""
+        if not self.move_history:
+            return None
+        record = self.move_history.pop()
+        self.board.pop()
+        self.move_count = len(self.move_history)
+        self.result = None
+        self.result_pgn = "*"
+        if self.board.is_game_over():
+            self._check_game_over()
+        return record
+
     def get_recent_moves(self, n: int = 10) -> list[str]:
         """获取最近 n 步的 SAN 记谱文本"""
         return [r.san for r in self.move_history[-n:]]
