@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#163227">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ChessCouncil">
+<title>学习 · ChessCouncil</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="style.css?v=mapp2">
+</head>
+<body class="page-learn" data-page="learn">
+<div class="app-shell page-shell">
+  <header class="topbar topbar-compact">
+    <div class="brand"><div class="brand-mark" aria-hidden="true"></div><h1>学习</h1></div>
+  </header>
+  <p id="ops-banner" class="ops-banner" hidden></p>
+  <div id="toast-host" class="toast-host" aria-live="polite"></div>
+
+  <div class="learn-mode-tabs" role="tablist">
+    <button type="button" class="learn-mode-tab active" data-learn="library">名局图库</button>
+    <button type="button" class="learn-mode-tab" data-learn="challenge">残局闯关</button>
+  </div>
+
+  <div id="learn-library">
+    <div class="lib-filters">
+      <button type="button" class="lib-filter active" data-cat="">全部</button>
+      <button type="button" class="lib-filter" data-cat="game">名局</button>
+      <button type="button" class="lib-filter" data-cat="endgame">残局</button>
+      <button type="button" class="lib-filter" data-cat="puzzle">战术</button>
+    </div>
+    <p id="lib-status" class="tool-hint"></p>
+    <p class="tool-hint">点「加载 / 演示 / AI 代下」后会进入对弈页。</p>
+    <div id="library-list" class="library-list"></div>
+  </div>
+
+  <div id="learn-challenge" hidden>
+    <p class="tool-hint">通关解锁下一关；点开始后进入对弈页。</p>
+    <p id="challenge-hud" class="challenge-hud" hidden></p>
+    <div id="challenge-list" class="challenge-list"></div>
+  </div>
+</div>
+
+<nav class="app-tabbar" aria-label="主导航">
+  <a class="tabbar-item" href="index.html">对弈</a>
+  <a class="tabbar-item is-active" href="learn.html" aria-current="page">学习</a>
+  <a class="tabbar-item" href="online.html">联机</a>
+  <a class="tabbar-item" href="tools.html">工具</a>
+</nav>
+
+<script src="vendor/jquery-3.7.1.min.js"></script>
+<script src="vendor/chessboard-1.0.0.min.js"></script>
+<script src="vendor/chess-0.10.3.min.js"></script>
+<script src="app.js?v=mapp2"></script>
+</body>
+</html>

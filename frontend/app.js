@@ -2,6 +2,28 @@
 const API = '/api';
 const PREFS_KEY = 'cc_prefs_v1';
 const ADMIN_TOKEN_KEY = 'cc_admin_token';
+const PAGE = document.body?.dataset?.page || 'play';
+const HANDOFF_KEY = 'cc_page_handoff_v1';
+
+function goToPlay(handoff = null) {
+  try {
+    if (handoff) sessionStorage.setItem(HANDOFF_KEY, JSON.stringify(handoff));
+    else sessionStorage.removeItem(HANDOFF_KEY);
+  } catch (_) {}
+  const base = location.pathname.includes('/') ? location.pathname.replace(/[^/]+$/, '') : '/';
+  location.href = `${base}index.html`;
+}
+
+function consumeHandoff() {
+  try {
+    const raw = sessionStorage.getItem(HANDOFF_KEY);
+    sessionStorage.removeItem(HANDOFF_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 let board = null;
 let game = new Chess();
 let orientation = 'white';
@@ -17,6 +39,7 @@ let autoTimer = null;
 let busy = false;
 const STEP_DELAY_MS = 1200;
 const FAST_STEP_DELAY_MS = 450;
+const SPEED_PREF_KEY = 'cc_playback_speed_v1';
 /** 上一步起终点（JJ 象棋风格：起点留白点） */
 let lastMoveFrom = null;
 let lastMoveTo = null;
@@ -26,6 +49,58 @@ let editPiece = ''; // '' = erase, else KQRBNPkqrbnp
 let editBoard = null; // Chess instance while editing
 let autoDelayMs = STEP_DELAY_MS;
 let progressTimer = null;
+
+function readPlaybackSpeedMs() {
+  const el = document.getElementById('playback-speed');
+  const fromUi = el ? parseInt(el.value, 10) : NaN;
+  if (!Number.isNaN(fromUi) && fromUi > 0) return fromUi;
+  try {
+    const saved = parseInt(localStorage.getItem(SPEED_PREF_KEY) || '', 10);
+    if (!Number.isNaN(saved) && saved > 0) return saved;
+  } catch (_) {}
+  return 900;
+}
+
+function applyPlaybackSpeedUi() {
+  const el = document.getElementById('playback-speed');
+  if (!el) return;
+  try {
+    const saved = localStorage.getItem(SPEED_PREF_KEY);
+    if (saved && [...el.options].some((o) => o.value === saved)) {
+      el.value = saved;
+    }
+  } catch (_) {}
+  autoDelayMs = readPlaybackSpeedMs();
+}
+
+function syncPlayToggle() {
+  const playing = autoPlay || libraryAuto;
+  const btn = $('#btn-play-toggle');
+  btn
+    .text(playing ? '暂停' : '播放')
+    .toggleClass('is-playing', playing)
+    .attr('title', playing ? '暂停自动播放' : '开始自动播放（AI 对战或名谱演示）');
+}
+
+function togglePlayback() {
+  if (autoPlay || libraryAuto) {
+    stopAuto();
+    stopLibraryAuto();
+    $('#ai-meta').text('已暂停');
+    syncPlayToggle();
+    return;
+  }
+  // 名谱优先：当前有跟谱
+  if (currentLibraryHasScript) {
+    startLibraryAuto();
+    return;
+  }
+  if (serverState.mode === 'ai_vs_ai' || serverState.mode === 'human_vs_ai') {
+    startAuto();
+    return;
+  }
+  showToast('请先开人机/机机对局，或加载名谱后再播放', 'error');
+}
 
 /** 联机房间 */
 let online = {
@@ -227,6 +302,7 @@ function resetAgentCompare() {
 }
 
 function initBoard() {
+  if (!document.getElementById('board')) return;
   board = Chessboard('board', {
     position: 'start',
     orientation: orientation,
@@ -335,7 +411,7 @@ function gotoPly(ply, { fromBrowse = true } = {}) {
   const fen = target === 0 ? START_FEN : (plyLog[target - 1] && plyLog[target - 1].fen);
   if (!fen) return;
   game.load(fen);
-  board.position(fen, false);
+  if (board) board.position(fen, false);
   selectedSquare = null;
   clearHighlights();
   if (target > 0) {
@@ -541,13 +617,14 @@ async function syncFromServer() {
   const state = await r.json();
   applyServerState(state);
   game.load(state.fen);
-  board.position(state.fen, false);
+  if (board) board.position(state.fen, false);
   selectedSquare = null;
   clearHighlights();
-  // 同步时若无逐步信息，保留或清除上一步标记
   paintLastMoveMarkers();
   syncPlyLogFromMoves(state.moves);
   updateStatus();
+  if (state.library) updateLibraryChrome(state.library);
+  return state;
 }
 
 function applyServerState(state) {
@@ -662,7 +739,7 @@ function applyMoveResult(data) {
     return;
   }
   game.load(data.fen);
-  board.position(data.fen, false);
+  if (board) board.position(data.fen, false);
   serverState.is_game_over = !!data.game_over;
   serverState.controller = data.next_controller;
   serverState.mode = data.mode || serverState.mode;
@@ -1070,9 +1147,11 @@ function newGamePayload() {
 
 function resetPanels() {
   game = new Chess();
-  board.position('start', false);
   orientation = 'white';
-  board.orientation('white');
+  if (board) {
+    board.position('start', false);
+    board.orientation('white');
+  }
   selectedSquare = null;
   clearLastMoveMarkers();
   clearHighlights();
@@ -1173,8 +1252,7 @@ function stopAuto() {
     clearTimeout(autoTimer);
     autoTimer = null;
   }
-  $('#btn-auto').text('自动对战').prop('disabled', false);
-  $('#btn-pause').prop('disabled', true);
+  syncPlayToggle();
 }
 
 function scheduleAuto() {
@@ -1182,6 +1260,7 @@ function scheduleAuto() {
     stopAuto();
     return;
   }
+  autoDelayMs = readPlaybackSpeedMs();
   autoTimer = setTimeout(async () => {
     if (!autoPlay) return;
     await runAiStep();
@@ -1198,10 +1277,11 @@ function startAuto() {
     alert('请先选择「AI vs AI」或「人 vs AI」模式并开新对局');
     return;
   }
-  autoDelayMs = $('#with-analysis').is(':checked') ? STEP_DELAY_MS : FAST_STEP_DELAY_MS;
+  stopLibraryAuto();
+  autoDelayMs = readPlaybackSpeedMs();
   autoPlay = true;
-  $('#btn-auto').text('对战中…').prop('disabled', true);
-  $('#btn-pause').prop('disabled', false);
+  syncPlayToggle();
+  $('#ai-meta').text(`自动对战中 · 速度 ${autoDelayMs}ms/步`);
   scheduleAuto();
 }
 
@@ -1239,7 +1319,7 @@ $('#btn-undo').click(async () => {
     }
     applyServerState(data);
     game.load(data.fen);
-    board.position(data.fen, false);
+    if (board) board.position(data.fen, false);
     selectedSquare = null;
     clearHighlights();
     syncPlyLogFromMoves(data.moves);
@@ -1292,6 +1372,7 @@ $('#btn-hint').click(async () => {
   }
 });
 $('#btn-flip').click(() => {
+  if (!board) return;
   orientation = orientation === 'white' ? 'black' : 'white';
   board.orientation(orientation);
   requestAnimationFrame(() => paintLastMoveMarkers());
@@ -1300,8 +1381,17 @@ $('#btn-ai-step').click(async () => {
   if (busy || autoPlay) return;
   await runAiStep();
 });
-$('#btn-auto').click(() => startAuto());
-$('#btn-pause').click(() => stopAuto());
+$('#btn-play-toggle').click(() => togglePlayback());
+$('#playback-speed').on('change', function () {
+  const ms = readPlaybackSpeedMs();
+  autoDelayMs = ms;
+  try {
+    localStorage.setItem(SPEED_PREF_KEY, String(ms));
+  } catch (_) {}
+  if (autoPlay || libraryAuto) {
+    $('#ai-meta').text(`速度已切换 · ${ms}ms/步（下一步生效）`);
+  }
+});
 $('#game-mode').change(() => {
   refreshModeControls();
   savePrefs();
@@ -1326,7 +1416,7 @@ async function showReviewFromData(data) {
   const debates = (data.debates || []).map(d =>
     `<li>第${escapeHtml(String(d.number))}步 ${escapeHtml(d.san)} → 仲裁 ${escapeHtml(d.verdict || '—')}</li>`
   ).join('');
-  switchWorkspace('more');
+  switchWorkspace('play');
   $('#review-section').show();
   const reviewEl = document.getElementById('review-section');
   if (reviewEl) reviewEl.open = true;
@@ -1340,7 +1430,7 @@ async function showReviewFromData(data) {
       <p><strong>辩论回合</strong></p><ul>${debates || '<li>本局未触发辩论</li>'}</ul>
       <pre style="white-space:pre-wrap;font-size:0.78rem;opacity:0.8">${escapeHtml(data.pgn || '')}</pre>
     </div>`);
-  reviewEl?.scrollIntoView({ behavior: 'smooth' });
+  reviewEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function renderAccuracyCard(acc) {
@@ -1440,11 +1530,14 @@ $(document).on('click', '.eval-dot', function () {
 });
 
 async function openPitchReviewAndLogs() {
-  switchWorkspace('more');
+  // 路演后留在棋盘侧，只展开复盘，不跳进工具堆
+  const reviewEl = document.getElementById('review-section');
+  if (reviewEl) {
+    reviewEl.style.display = '';
+    reviewEl.open = true;
+  }
   $('#btn-review').click();
-  const logsEl = document.getElementById('logs-section');
-  if (logsEl) logsEl.open = true;
-  refreshLogs();
+  showPitchCue('<strong>Demo 完成</strong> · 可看辩论 Tab 或点「赛后复盘」');
 }
 
 function showPitchCue(html) {
@@ -1453,6 +1546,10 @@ function showPitchCue(html) {
 }
 
 async function runDemoById(demoId, title) {
+  if (PAGE !== 'play' || !board) {
+    goToPlay({ kind: 'demo', demoId, title });
+    return;
+  }
   if (busy) return;
   busy = true;
   stopAuto();
@@ -1488,10 +1585,6 @@ async function runDemoById(demoId, title) {
         $('.tab[data-tab="debate"]').addClass('active');
         $('#tab-debate').addClass('active');
       }
-      showPitchCue(
-        '<strong>路演下一步：</strong>已打开复盘与调用证明。然后到「对弈设置 → 高级选项 → 快速 AI 对战」演示算法对抗。'
-      );
-      await openPitchReviewAndLogs();
     }
   } finally {
     setProgress(null);
@@ -1500,57 +1593,47 @@ async function runDemoById(demoId, title) {
 }
 
 async function loadDemos() {
+  const box = $('#demo-buttons');
+  if (!box.length) return;
   try {
     const data = await fetch(`${API}/demos`).then(r => r.json());
-    const box = $('#demo-buttons').empty();
+    box.empty();
     (data.demos || []).forEach(d => {
       const btn = $(`<button type="button" title="${escapeHtml(d.blurb)}">${escapeHtml(d.title)}</button>`);
       btn.click(() => runDemoById(d.id, d.title));
       box.append(btn);
     });
   } catch (e) {
-    $('#demo-buttons').text('Demo 列表加载失败');
+    box.text('Demo 列表加载失败');
   }
 }
 
 $('#btn-pitch-demo').click(() => runDemoById('greek_gift', '希腊赠礼（攻王弃象）'));
 
 $('#btn-pitch-fast').click(async () => {
+  if (PAGE !== 'play' || !board) {
+    goToPlay({ kind: 'ai-fast' });
+    return;
+  }
   if (busy) return;
   stopAuto();
   $('#game-mode').val('ai_vs_ai');
   $('#with-analysis').prop('checked', false);
   $('#engine-depth').val('8');
-  autoDelayMs = FAST_STEP_DELAY_MS;
+  const speedEl = document.getElementById('playback-speed');
+  if (speedEl) speedEl.value = '450';
+  autoDelayMs = readPlaybackSpeedMs();
   refreshModeControls();
   await startNewGame();
-  $('#ai-meta').text('快速对战：Council 已关 · 深度 8');
+  $('#ai-meta').text(`快速对战：Council 已关 · 速度 ${autoDelayMs}ms/步`);
   startAuto();
 });
 
 function switchWorkspace(panelId) {
-  $('.ws-tab').removeClass('active').attr('aria-selected', 'false');
-  $(`.ws-tab[data-panel="${panelId}"]`).addClass('active').attr('aria-selected', 'true');
-  $('.ws-panel').each(function () {
-    this.hidden = true;
-  });
-  const panel = document.getElementById(`panel-${panelId}`);
-  if (panel) panel.hidden = false;
-  // 棋盘占满首屏时，分区在折线下；不滚动会像「点不开」
-  const nav = document.querySelector('.workspace-nav');
-  const target = panel || nav;
-  if (target) {
-    requestAnimationFrame(() => {
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }
-  if (panelId === 'learn') {
-    if ($('.learn-mode-tab.active').attr('data-learn') === 'challenge') {
-      loadChallengeList();
-    } else {
-      loadLibraryList();
-    }
-  }
+  const map = { play: 'index.html', learn: 'learn.html', online: 'online.html', tools: 'tools.html', more: 'tools.html' };
+  const id = panelId === 'more' ? 'tools' : panelId;
+  const href = map[id];
+  if (href) location.href = href;
 }
 
 $(document).on('click', '.ws-tab', function (e) {
@@ -1560,13 +1643,9 @@ $(document).on('click', '.ws-tab', function (e) {
 });
 
 $('#btn-show-logs').click(() => {
-  switchWorkspace('more');
-  const el = document.getElementById('logs-section');
-  if (el) {
-    el.open = true;
-    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
+  switchWorkspace('tools');
   refreshLogs();
+  document.getElementById('logs-list')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
 
 async function refreshLogs() {
@@ -1633,6 +1712,10 @@ $('#btn-ping-llm').click(async () => {
 });
 
 $('#btn-analyze-pos').click(async () => {
+  if (PAGE !== 'play' || !board) {
+    goToPlay({ kind: 'analyze', title: '局面分析' });
+    return;
+  }
   if (busy) return;
   busy = true;
   setProgress('分析当前局面…');
@@ -1728,6 +1811,15 @@ $('#btn-vision').click(async () => {
       alert('识谱失败：' + (typeof detail === 'string' ? detail : JSON.stringify(detail)));
       return;
     }
+    if (PAGE !== 'play' || !board) {
+      $('#vision-status').text('已映射，正在打开对弈页…');
+      goToPlay({
+        kind: 'sync',
+        title: '识谱局面',
+        openEdit: !data.analysis,
+      });
+      return;
+    }
     const state = data.state || {};
     applyServerState(state);
     clearLastMoveMarkers();
@@ -1785,7 +1877,7 @@ function syncEditFenPreview() {
   const parts = editBoard.fen().split(' ');
   parts[1] = $('#edit-turn').val() || 'w';
   $('#edit-fen-preview').text(parts.join(' '));
-  board.position(editBoard.fen(), false);
+  if (board) board.position(editBoard.fen(), false);
 }
 
 function enterEditMode(fen) {
@@ -1855,7 +1947,7 @@ async function applyEditedFen({ analyze }) {
     applyServerState(state);
     clearLastMoveMarkers();
     game.load(state.fen);
-    board.position(state.fen, false);
+    if (board) board.position(state.fen, false);
     selectedSquare = null;
     clearHighlights();
     updateStatus();
@@ -1884,10 +1976,17 @@ async function applyEditedFen({ analyze }) {
   }
 }
 
-$('#btn-edit-fen').click(() => enterEditMode(game.fen()));
+$('#btn-edit-fen').click(() => {
+  if (PAGE !== 'play' || !board) {
+    goToPlay({ kind: 'sync', openEdit: true, title: '纠错' });
+    return;
+  }
+  const fen = (serverState && serverState.fen) || game.fen();
+  enterEditMode(fen);
+});
 $('#btn-cancel-edit').click(() => {
   exitEditMode();
-  board.position(game.fen(), false);
+  if (board) board.position(game.fen(), false);
   updateStatus();
 });
 $('#edit-turn').on('change', syncEditFenPreview);
@@ -1896,6 +1995,7 @@ $('#btn-apply-analyze').click(() => applyEditedFen({ analyze: true }));
 
 async function refreshHistory() {
   const box = $('#history-list');
+  if (!box.length) return;
   try {
     const data = await fetch(`${API}/games?limit=20`).then((r) => r.json());
     const games = data.games || [];
@@ -1927,6 +2027,10 @@ async function refreshHistory() {
             return;
           }
           stopAuto();
+          if (PAGE !== 'play' || !board) {
+            goToPlay({ kind: 'sync', title: g.title || '历史局面' });
+            return;
+          }
           exitEditMode();
           applyServerState(state);
           clearLastMoveMarkers();
@@ -2016,16 +2120,6 @@ $('#btn-analyze-pgn').click(async () => {
   }
 });
 
-function stopAuto() {
-  autoPlay = false;
-  if (autoTimer) {
-    clearTimeout(autoTimer);
-    autoTimer = null;
-  }
-  $('#btn-auto').text('自动对战').prop('disabled', false);
-  $('#btn-pause').prop('disabled', true);
-}
-
 function stopLibraryAuto() {
   libraryAuto = false;
   if (libraryAutoTimer) {
@@ -2034,6 +2128,7 @@ function stopLibraryAuto() {
   }
   $('#btn-lib-auto').prop('disabled', !currentLibraryHasScript);
   $('#btn-lib-stop').prop('disabled', true);
+  syncPlayToggle();
 }
 
 function updateLibraryChrome(lib) {
@@ -2057,7 +2152,7 @@ function updateLibraryChrome(lib) {
   $('#btn-lib-stop').prop('disabled', !libraryAuto);
 }
 
-async function loadLibraryItem(itemId, { mode, forAi } = {}) {
+async function loadLibraryItem(itemId, { mode, forAi, thenAuto } = {}) {
   if (online.active) {
     alert('请先退出联机房间，再加载名局/残局');
     return;
@@ -2079,13 +2174,22 @@ async function loadLibraryItem(itemId, { mode, forAi } = {}) {
     alert(JSON.stringify(state.detail || state));
     return;
   }
+
+  if (PAGE !== 'play' || !board) {
+    goToPlay({
+      kind: forAi ? 'ai-auto' : thenAuto ? 'lib-auto' : 'sync',
+      title: state.library?.title || itemId,
+      orientBlack: String(state.turn || '').startsWith('b'),
+    });
+    return;
+  }
+
   applyServerState(state);
   clearLastMoveMarkers();
   game.load(state.fen);
   board.position(state.fen, false);
   selectedSquare = null;
   clearHighlights();
-  // 残局常执劣势方在下，保持白在下；若黑先行可翻面
   if ((state.turn || '').startsWith('b')) {
     orientation = 'black';
     board.orientation('black');
@@ -2099,8 +2203,10 @@ async function loadLibraryItem(itemId, { mode, forAi } = {}) {
   refreshModeControls();
   $('#ai-meta').text(`已加载：${state.library?.title || itemId}`);
   if (forAi) {
-    autoDelayMs = FAST_STEP_DELAY_MS;
+    autoDelayMs = readPlaybackSpeedMs();
     startAuto();
+  } else if (thenAuto) {
+    startLibraryAuto();
   }
 }
 
@@ -2139,11 +2245,16 @@ function startLibraryAuto() {
   libraryAuto = true;
   $('#btn-lib-auto').prop('disabled', true);
   $('#btn-lib-stop').prop('disabled', false);
+  syncPlayToggle();
+  const delay = readPlaybackSpeedMs();
+  $('#ai-meta').text(`名谱演示中 · 速度 ${delay}ms/步`);
   const tick = async () => {
     if (!libraryAuto) return;
     const ok = await libraryStepOnce();
     if (ok && libraryAuto) {
-      libraryAutoTimer = setTimeout(tick, 700);
+      libraryAutoTimer = setTimeout(tick, readPlaybackSpeedMs());
+    } else {
+      syncPlayToggle();
     }
   };
   tick();
@@ -2152,6 +2263,7 @@ function startLibraryAuto() {
 async function loadLibraryList() {
   const qs = libraryFilter ? `?category=${encodeURIComponent(libraryFilter)}` : '';
   const box = $('#library-list');
+  if (!box.length) return;
   try {
     const r = await fetch(`${API}/library${qs}`);
     const data = await r.json().catch(() => ({}));
@@ -2197,8 +2309,7 @@ async function loadLibraryList() {
         row.append(
           $('<button type="button" class="accent">演示</button>').on('click', async () => {
             clearChallenge();
-            await loadLibraryItem(it.id, { mode: 'human_vs_human' });
-            startLibraryAuto();
+            await loadLibraryItem(it.id, { mode: 'human_vs_human', thenAuto: true });
           })
         );
       }
@@ -2392,7 +2503,7 @@ async function startChallengeLevel(lv) {
     alert(JSON.stringify(state.detail || state));
     return;
   }
-  challengeState = {
+  const nextChallenge = {
     active: true,
     level: lv.level,
     id: lv.id,
@@ -2400,6 +2511,14 @@ async function startChallengeLevel(lv) {
     goal: lv.goal || '',
     humanColor: lv.human_color || 'white',
   };
+  if (PAGE !== 'play' || !board) {
+    try {
+      sessionStorage.setItem('cc_challenge_state_v1', JSON.stringify(nextChallenge));
+    } catch (_) {}
+    goToPlay({ kind: 'challenge', title: lv.title, orientBlack: (lv.human_color || 'white') === 'black' });
+    return;
+  }
+  challengeState = nextChallenge;
   applyServerState(state);
   clearLastMoveMarkers();
   plyLog = [];
@@ -2425,7 +2544,6 @@ async function startChallengeLevel(lv) {
   updateChallengeHud();
   renderMoveList();
   $('#ai-meta').text(`闯关第 ${lv.level} 关 · ${lv.title}`);
-  switchWorkspace('play');
 }
 
 $('.learn-mode-tab').click(function () {
@@ -2461,7 +2579,7 @@ $('#btn-lib-ai').click(() => {
   if (online.active) return;
   $('#game-mode').val('ai_vs_ai');
   $('#with-analysis').prop('checked', false);
-  autoDelayMs = FAST_STEP_DELAY_MS;
+  autoDelayMs = readPlaybackSpeedMs();
   refreshModeControls();
   startAuto();
 });
@@ -2515,9 +2633,11 @@ function applyOnlineBoardState(state) {
   } catch (_) {
     game.reset();
   }
-  board.position(state.fen, false);
   orientation = online.color === 'black' ? 'black' : 'white';
-  board.orientation(orientation);
+  if (board) {
+    board.position(state.fen, false);
+    board.orientation(orientation);
+  }
   selectedSquare = null;
   clearHighlights();
   updateStatus();
@@ -2525,9 +2645,6 @@ function applyOnlineBoardState(state) {
   const w = seats.white ? `${seats.white.name}${seats.white.connected ? '' : '(离线)'}` : '空位';
   const b = seats.black ? `${seats.black.name}${seats.black.connected ? '' : '(离线)'}` : '空位';
   $('#ai-meta').text(`联机 ${online.roomId} · 白:${w} · 黑:${b}`);
-  if (state.is_game_over && state.result) {
-    // 等 move 包带 finale；纯 state 时用客户端兜底
-  }
 }
 
 function applyOnlineMovePayload(data) {
@@ -2622,7 +2739,10 @@ async function enterOnlineRoom(session) {
   applyOnlineBoardState(session.state);
   updateOnlineChrome();
   connectOnlineWs();
-  // 更新地址栏方便分享
+  if (PAGE !== 'play') {
+    location.href = `index.html?room=${encodeURIComponent(online.roomId)}`;
+    return;
+  }
   const u = new URL(window.location.href);
   u.searchParams.set('room', online.roomId);
   history.replaceState(null, '', u.toString());
@@ -2638,7 +2758,7 @@ function leaveOnlineRoom() {
   const u = new URL(window.location.href);
   u.searchParams.delete('room');
   history.replaceState(null, '', u.toString());
-  startNewGame();
+  if (PAGE === 'play' && board) startNewGame();
 }
 
 async function joinRoomByCode(code, name) {
@@ -2714,26 +2834,7 @@ $('#btn-room-copy').click(async () => {
 
 $('#btn-room-leave').click(() => leaveOnlineRoom());
 
-$(document).ready(async () => {
-  initBoard();
-  applyPrefs();
-  refreshModeControls();
-  $(window).on('resize', () => {
-    if (lastMoveFrom && lastMoveTo) paintLastMoveMarkers();
-  });
-
-  const roomParam = new URLSearchParams(location.search).get('room');
-  if (roomParam) {
-    $('#online-room-code').val(roomParam.toUpperCase());
-    const ok = await joinRoomByCode(roomParam);
-    if (!ok) await startNewGame();
-  } else {
-    await startNewGame();
-  }
-
-  await loadDemos();
-  await loadLibraryList();
-  refreshHistory();
+async function refreshHealthBanner() {
   try {
     const h = await fetch(`${API}/health`).then(r => r.json());
     $('#llm-status').text(
@@ -2755,5 +2856,146 @@ $(document).ready(async () => {
     $('#llm-status').text('无法连接后端 /api/health');
     setOpsBanner('无法连接后端。请确认服务已在 8000 端口启动。', true);
     showToast('无法连接后端 /api/health', 'error');
+  }
+}
+
+async function applyPlayHandoff(handoff) {
+  if (!handoff || !board) return;
+
+  if (handoff.orientBlack) {
+    orientation = 'black';
+    board.orientation('black');
+  } else if (handoff.orientBlack === false) {
+    orientation = 'white';
+    board.orientation('white');
+  }
+
+  if (handoff.kind === 'challenge') {
+    try {
+      const raw = sessionStorage.getItem('cc_challenge_state_v1');
+      if (raw) challengeState = JSON.parse(raw);
+      sessionStorage.removeItem('cc_challenge_state_v1');
+    } catch (_) {}
+    updateChallengeHud();
+    $('#game-mode').val('human_vs_ai');
+    if (challengeState.humanColor) $('#human-color').val(challengeState.humanColor);
+    $('#with-analysis').prop('checked', false);
+    refreshModeControls();
+    $('#ai-meta').text(
+      challengeState.active
+        ? `闯关第 ${challengeState.level} 关 · ${challengeState.title}`
+        : handoff.title || '闯关'
+    );
+  } else if (handoff.kind === 'ai-auto') {
+    $('#game-mode').val('ai_vs_ai');
+    refreshModeControls();
+    autoDelayMs = readPlaybackSpeedMs();
+    $('#ai-meta').text(handoff.title ? `AI 演示：${handoff.title}` : 'AI 自动对弈');
+    startAuto();
+  } else if (handoff.kind === 'lib-auto') {
+    $('#ai-meta').text(handoff.title ? `演示：${handoff.title}` : '名谱演示');
+    startLibraryAuto();
+  } else if (handoff.kind === 'demo') {
+    await runDemoById(handoff.demoId, handoff.title);
+  } else if (handoff.kind === 'analyze') {
+    $('#btn-analyze-pos').trigger('click');
+  } else if (handoff.kind === 'ai-fast') {
+    $('#game-mode').val('ai_vs_ai');
+    $('#with-analysis').prop('checked', false);
+    const speedEl = document.getElementById('playback-speed');
+    if (speedEl) speedEl.value = '450';
+    autoDelayMs = readPlaybackSpeedMs();
+    refreshModeControls();
+    await startNewGame();
+    $('#ai-meta').text(`快速对战：Council 已关 · 速度 ${autoDelayMs}ms/步`);
+    startAuto();
+  } else if (handoff.title) {
+    $('#ai-meta').text(handoff.title);
+  }
+
+  if (handoff.openEdit) {
+    const fen = game.fen();
+    enterEditMode(fen);
+  }
+}
+
+async function bootPlay() {
+  initBoard();
+  applyPrefs();
+  applyPlaybackSpeedUi();
+  syncPlayToggle();
+  refreshModeControls();
+  $(window).on('resize', () => {
+    if (lastMoveFrom && lastMoveTo) paintLastMoveMarkers();
+  });
+
+  const handoff = consumeHandoff();
+  const roomParam = new URLSearchParams(location.search).get('room');
+
+  if (roomParam) {
+    $('#online-room-code').val(roomParam.toUpperCase());
+    const ok = await joinRoomByCode(roomParam);
+    if (!ok) await startNewGame();
+  } else if (handoff && (handoff.kind === 'demo' || handoff.kind === 'ai-fast')) {
+    if (handoff.kind === 'ai-fast') {
+      await applyPlayHandoff(handoff);
+    } else {
+      await startNewGame();
+      await applyPlayHandoff(handoff);
+    }
+    return;
+  } else if (handoff && ['sync', 'ai-auto', 'lib-auto', 'challenge', 'analyze'].includes(handoff.kind)) {
+    try {
+      await syncFromServer();
+    } catch (_) {
+      await startNewGame();
+    }
+    await applyPlayHandoff(handoff);
+  } else {
+    await startNewGame();
+    if (handoff) await applyPlayHandoff(handoff);
+  }
+}
+
+async function bootLearn() {
+  applyPrefs();
+  await loadLibraryList();
+  try {
+    const raw = sessionStorage.getItem('cc_challenge_state_v1');
+    if (raw) {
+      /* keep for play handoff */
+    }
+  } catch (_) {}
+}
+
+async function bootOnline() {
+  applyPrefs();
+  const roomParam = new URLSearchParams(location.search).get('room');
+  if (roomParam) {
+    $('#online-room-code').val(roomParam.toUpperCase());
+  }
+}
+
+async function bootTools() {
+  applyPrefs();
+  await loadDemos();
+  refreshHistory();
+  await refreshHealthBanner();
+}
+
+$(document).ready(async () => {
+  if (PAGE === 'play') {
+    await bootPlay();
+    await refreshHealthBanner();
+  } else if (PAGE === 'learn') {
+    await bootLearn();
+  } else if (PAGE === 'online') {
+    await bootOnline();
+  } else if (PAGE === 'tools') {
+    await bootTools();
+  }
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
   }
 });

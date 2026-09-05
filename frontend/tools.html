@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#163227">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ChessCouncil">
+<title>工具 · ChessCouncil</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="style.css?v=mapp2">
+</head>
+<body class="page-tools" data-page="tools">
+<div class="app-shell page-shell">
+  <header class="topbar topbar-compact">
+    <div class="brand"><div class="brand-mark" aria-hidden="true"></div><h1>工具</h1></div>
+    <span id="llm-status" class="pill">模型…</span>
+  </header>
+  <p id="ops-banner" class="ops-banner" hidden></p>
+  <div id="toast-host" class="toast-host" aria-live="polite"></div>
+
+  <div class="tools-grid">
+    <details class="tool-block" open>
+      <summary>拍照识谱</summary>
+      <p class="tool-hint">识别成功后会回到对弈页。</p>
+      <div class="vision-panel">
+        <div class="vision-preview-wrap">
+          <img id="vision-preview" class="vision-preview" alt="预览" hidden>
+          <div id="vision-preview-empty" class="vision-preview-empty">尚未选择照片</div>
+        </div>
+        <div class="vision-controls">
+          <label class="vision-file-btn">
+            拍照 / 选图
+            <input type="file" id="vision-file" accept="image/*" capture="environment" hidden>
+          </label>
+          <label class="field inline">
+            <span>行棋方</span>
+            <select id="vision-side">
+              <option value="">自动</option>
+              <option value="w">白方</option>
+              <option value="b">黑方</option>
+            </select>
+          </label>
+          <label class="field check inline">
+            <input type="checkbox" id="vision-analyze">
+            <span>映射后分析</span>
+          </label>
+          <button id="btn-vision" class="accent" type="button">识别并映射</button>
+          <button id="btn-edit-fen" type="button">纠错（对弈页）</button>
+          <button id="btn-analyze-pos" type="button">分析当前局面</button>
+          <span id="vision-status" class="vision-status"></span>
+        </div>
+      </div>
+    </details>
+
+    <details class="tool-block">
+      <summary>对局历史</summary>
+      <div class="history-actions">
+        <button id="btn-save-game" type="button">保存当前</button>
+        <button id="btn-refresh-history" type="button">刷新</button>
+      </div>
+      <div id="history-list" class="history-list"></div>
+    </details>
+
+    <details class="tool-block">
+      <summary>PGN 导入</summary>
+      <textarea id="pgn-input" placeholder="粘贴 PGN…"></textarea>
+      <button id="btn-analyze-pgn" type="button">分析 PGN</button>
+      <div id="pgn-result"></div>
+    </details>
+
+    <details class="tool-block">
+      <summary>路演 / 开发</summary>
+      <div class="history-actions">
+        <button id="btn-pitch-demo" type="button">希腊赠礼 Demo</button>
+        <button id="btn-pitch-fast" type="button">快速 AI 对战</button>
+        <button id="btn-preview-finale" type="button">预览结算</button>
+      </div>
+      <div id="demo-buttons" class="demo-buttons"></div>
+      <div class="history-actions" style="margin-top:10px">
+        <button id="btn-refresh-logs" type="button">刷新日志</button>
+        <button id="btn-ping-llm" type="button">Ping 模型</button>
+      </div>
+      <div id="logs-list" class="logs-list"></div>
+    </details>
+  </div>
+</div>
+
+<nav class="app-tabbar" aria-label="主导航">
+  <a class="tabbar-item" href="index.html">对弈</a>
+  <a class="tabbar-item" href="learn.html">学习</a>
+  <a class="tabbar-item" href="online.html">联机</a>
+  <a class="tabbar-item is-active" href="tools.html" aria-current="page">工具</a>
+</nav>
+
+<script src="vendor/jquery-3.7.1.min.js"></script>
+<script src="vendor/chessboard-1.0.0.min.js"></script>
+<script src="vendor/chess-0.10.3.min.js"></script>
+<script src="app.js?v=mapp2"></script>
+</body>
+</html>

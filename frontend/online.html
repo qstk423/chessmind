@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#163227">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ChessCouncil">
+<title>联机 · ChessCouncil</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="style.css?v=mapp2">
+</head>
+<body class="page-online" data-page="online">
+<div class="app-shell page-shell">
+  <header class="topbar topbar-compact">
+    <div class="brand"><div class="brand-mark" aria-hidden="true"></div><h1>联机</h1></div>
+  </header>
+  <p id="ops-banner" class="ops-banner" hidden></p>
+  <div id="toast-host" class="toast-host" aria-live="polite"></div>
+
+  <div class="online-page">
+    <p class="panel-lead">同一 Wi‑Fi 下创建房间，把链接发给对手。进房后自动去对弈页。</p>
+    <div class="online-bar bare" id="online-bar">
+      <div class="online-copy">
+        <strong>房间</strong>
+        <span id="online-status">未加入</span>
+      </div>
+      <div class="online-controls stacked">
+        <input id="online-name" class="online-input" type="text" maxlength="24" placeholder="昵称" value="玩家">
+        <button id="btn-room-create" class="accent" type="button">创建房间</button>
+        <input id="online-room-code" class="online-input code" type="text" maxlength="8" placeholder="房间码" autocomplete="off">
+        <button id="btn-room-join" type="button">加入房间</button>
+        <button id="btn-room-copy" type="button" hidden>复制链接</button>
+        <button id="btn-room-leave" type="button" hidden>退出联机</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<nav class="app-tabbar" aria-label="主导航">
+  <a class="tabbar-item" href="index.html">对弈</a>
+  <a class="tabbar-item" href="learn.html">学习</a>
+  <a class="tabbar-item is-active" href="online.html" aria-current="page">联机</a>
+  <a class="tabbar-item" href="tools.html">工具</a>
+</nav>
+
+<script src="vendor/jquery-3.7.1.min.js"></script>
+<script src="vendor/chessboard-1.0.0.min.js"></script>
+<script src="vendor/chess-0.10.3.min.js"></script>
+<script src="app.js?v=mapp2"></script>
+</body>
+</html>

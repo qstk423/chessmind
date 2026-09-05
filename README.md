@@ -26,6 +26,7 @@
 - **调用日志**：`logs/llm_calls.jsonl`，便于大赛提交调用证明
 - **无 Key / 无引擎降级**：仍可打开 UI；LLM 与 Stockfish 缺失时软降级
 - **Docker**：`docker compose up` 一键部署（镜像内含 Stockfish）
+- **手机适配 / PWA**：窄屏底栏导航、触控目标加大；可「添加到主屏幕」
 
 ## 工作原理
 
@@ -69,6 +70,8 @@ chmod +x scripts/run_dev.sh
 ```
 
 打开 http://127.0.0.1:8000  
+
+**手机：** 电脑用 `HOST=0.0.0.0` 启动后，手机浏览器打开 `http://<电脑局域网IP>:8000`，Safari/Chrome 可「添加到主屏幕」（PWA）。
 
 **局域网联机（两部手机）：** 电脑执行 `HOST=0.0.0.0 ./scripts/run_dev.sh`（或 `HOST=0.0.0.0 python -m src.main`），手机访问 `http://<电脑局域网IP>:8000`，点「创建房间」→「复制链接」发给对方。
 
