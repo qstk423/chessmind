@@ -143,6 +143,9 @@ class ChessMindOrchestrator:
         *,
         mode: GameMode | None = None,
         with_analysis: bool | None = None,
+        human_color: Literal["white", "black"] | None = None,
+        free_play: bool = False,
+        engine_depth: int | None = None,
     ) -> dict:
         """加载名局/残局：有谱则准备逐步演示；无谱则进入局面体验。"""
         item = get_library_item(item_id)
@@ -152,11 +155,19 @@ class ChessMindOrchestrator:
             self.mode = mode
         if with_analysis is not None:
             self.with_analysis = with_analysis
+        if engine_depth is not None:
+            self.engine_depth = engine_depth
         state = self.load_fen(item["fen"])
         if "error" in state:
             return state
+        if human_color in ("white", "black"):
+            self.human_color = human_color
+        elif mode == "human_vs_ai":
+            self.human_color = (
+                "white" if self.game.board.turn == chess.WHITE else "black"
+            )
         self.library_id = item["id"]
-        self.library_moves = list(item.get("moves") or [])
+        self.library_moves = [] if free_play else list(item.get("moves") or [])
         self.library_index = 0
         self.library_meta = {
             "id": item["id"],
@@ -168,6 +179,8 @@ class ChessMindOrchestrator:
             "year": item.get("year"),
             "has_script": bool(self.library_moves),
             "total_moves": len(self.library_moves),
+            "free_play": free_play,
+            "challenge": free_play,
         }
         self._demo_diverge = bool(item.get("diverge"))
         state = self.get_state()

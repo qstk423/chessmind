@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=play9">
+<link rel="stylesheet" href="style.css?v=play10">
 </head>
 <body>
 <div class="app-shell">
@@ -202,21 +202,32 @@
     </div>
 
     <div class="ws-panel" id="panel-learn" data-panel="learn" hidden>
-      <p class="panel-lead">点卡片按钮：加载局面、演示名谱或 AI 代下</p>
-      <div class="lib-filters" id="lib-filters">
-        <button type="button" class="lib-filter active" data-cat="">全部</button>
-        <button type="button" class="lib-filter" data-cat="game">名局</button>
-        <button type="button" class="lib-filter" data-cat="endgame">残局</button>
-        <button type="button" class="lib-filter" data-cat="puzzle">战术</button>
+      <p class="panel-lead">图库跟谱演示，或残局闯关通关</p>
+      <div class="learn-mode-tabs" role="tablist">
+        <button type="button" class="learn-mode-tab active" data-learn="library">图库</button>
+        <button type="button" class="learn-mode-tab" data-learn="challenge">残局闯关</button>
       </div>
-      <div class="lib-actions">
-        <button id="btn-lib-step" type="button" disabled>名谱下一步</button>
-        <button id="btn-lib-auto" class="accent" type="button" disabled>自动演示</button>
-        <button id="btn-lib-ai" type="button" disabled>AI 代下</button>
-        <button id="btn-lib-stop" type="button" disabled>停止</button>
+      <div id="learn-library">
+        <div class="lib-filters" id="lib-filters">
+          <button type="button" class="lib-filter active" data-cat="">全部</button>
+          <button type="button" class="lib-filter" data-cat="game">名局</button>
+          <button type="button" class="lib-filter" data-cat="endgame">残局</button>
+          <button type="button" class="lib-filter" data-cat="puzzle">战术</button>
+        </div>
+        <div class="lib-actions">
+          <button id="btn-lib-step" type="button" disabled>名谱下一步</button>
+          <button id="btn-lib-auto" class="accent" type="button" disabled>自动演示</button>
+          <button id="btn-lib-ai" type="button" disabled>AI 代下</button>
+          <button id="btn-lib-stop" type="button" disabled>停止</button>
+        </div>
+        <p id="lib-status" class="tool-hint"></p>
+        <div id="library-list" class="library-list"></div>
       </div>
-      <p id="lib-status" class="tool-hint"></p>
-      <div id="library-list" class="library-list"></div>
+      <div id="learn-challenge" hidden>
+        <p class="tool-hint">按关卡通关：你执行棋方，对战引擎；将杀即过关。进度保存在本机。</p>
+        <p id="challenge-hud" class="challenge-hud" hidden></p>
+        <div id="challenge-list" class="challenge-list"></div>
+      </div>
     </div>
 
     <div class="ws-panel" id="panel-online" data-panel="online" hidden>
@@ -352,6 +363,6 @@
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=play9"></script>
+<script src="app.js?v=play10"></script>
 </body>
 </html>

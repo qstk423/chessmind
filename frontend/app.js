@@ -42,6 +42,18 @@ let libraryAutoTimer = null;
 let libraryFilter = '';
 let currentLibraryHasScript = false;
 
+/** 残局闯关 */
+const CHALLENGE_STORAGE_KEY = 'cc_challenge_cleared_v1';
+let challengeState = {
+  active: false,
+  level: null,
+  id: null,
+  title: '',
+  goal: '',
+  humanColor: 'white',
+};
+let challengeLevelsCache = [];
+
 /** 本局着法回放（机机象棋式着法列表） */
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 let plyLog = []; // {number,san,uci,fen,classification?}
@@ -605,6 +617,7 @@ function applyMoveResult(data) {
     if (!data.skip_finale) {
       showFinale(data.finale || inferFinaleClient(data));
     }
+    maybeCompleteChallenge(data);
   }
 }
 
@@ -1242,6 +1255,7 @@ async function showReviewFromData(data) {
   $('#review-result').html(`
     <div class="review-block">
       <p><strong>${escapeHtml(data.title || '复盘')}</strong> · 共 ${data.total_moves} 步 · 辩论 ${data.debate_count || 0} 次 · 平均争议 ${Math.round((data.avg_disagreement || 0) * 100)}%</p>
+      ${renderAccuracyCard(data.accuracy)}
       ${renderEvalCurveChart(data.eval_curve || [])}
       <p><strong>叙事</strong></p><ul>${narr || '<li>暂无</li>'}</ul>
       <p><strong>关键局面</strong></p><ul>${highs || '<li>暂无</li>'}</ul>
@@ -1249,6 +1263,27 @@ async function showReviewFromData(data) {
       <pre style="white-space:pre-wrap;font-size:0.78rem;opacity:0.8">${escapeHtml(data.pgn || '')}</pre>
     </div>`);
   reviewEl?.scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderAccuracyCard(acc) {
+  if (!acc || acc.overall == null) {
+    return `<div class="accuracy-empty">暂无准确率（需有引擎走子分类）</div>`;
+  }
+  const ring = Math.max(0, Math.min(100, acc.overall));
+  const white = acc.white != null ? `${acc.white}%` : '—';
+  const black = acc.black != null ? `${acc.black}%` : '—';
+  return `
+    <div class="accuracy-panel">
+      <div class="accuracy-score" aria-label="总准确率 ${ring}%">
+        <span class="accuracy-num">${ring}</span>
+        <span class="accuracy-unit">%</span>
+      </div>
+      <div class="accuracy-copy">
+        <strong>准确率</strong>
+        <span>白方 ${escapeHtml(String(white))} · 黑方 ${escapeHtml(String(black))}</span>
+        <span class="accuracy-note">${escapeHtml(acc.note || '')}</span>
+      </div>
+    </div>`;
 }
 
 function renderEvalCurveChart(curve) {
@@ -1432,7 +1467,11 @@ function switchWorkspace(panelId) {
     });
   }
   if (panelId === 'learn') {
-    loadLibraryList();
+    if ($('.learn-mode-tab.active').attr('data-learn') === 'challenge') {
+      loadChallengeList();
+    } else {
+      loadLibraryList();
+    }
   }
 }
 
@@ -2059,12 +2098,14 @@ async function loadLibraryList() {
       const row = $('<div class="row"></div>');
       row.append(
         $('<button type="button">加载</button>').on('click', () => {
+          clearChallenge();
           loadLibraryItem(it.id, { mode: 'human_vs_human' });
         })
       );
       if (it.has_script) {
         row.append(
           $('<button type="button" class="accent">演示</button>').on('click', async () => {
+            clearChallenge();
             await loadLibraryItem(it.id, { mode: 'human_vs_human' });
             startLibraryAuto();
           })
@@ -2072,12 +2113,14 @@ async function loadLibraryList() {
       }
       row.append(
         $('<button type="button">AI 代下</button>').on('click', () => {
+          clearChallenge();
           loadLibraryItem(it.id, { forAi: true });
         })
       );
       if (it.tags && it.tags.includes('debate')) {
         row.append(
           $('<button type="button">Council</button>').on('click', async () => {
+            clearChallenge();
             await loadLibraryItem(it.id, { mode: 'human_vs_human' });
             $('#btn-analyze-pos').click();
           })
@@ -2091,6 +2134,228 @@ async function loadLibraryList() {
     box.html('<div class="history-empty">学习库加载失败，请确认服务已重启到最新代码</div>');
   }
 }
+
+function getClearedChallenges() {
+  try {
+    const raw = localStorage.getItem(CHALLENGE_STORAGE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function markChallengeCleared(id) {
+  const set = new Set(getClearedChallenges());
+  set.add(id);
+  localStorage.setItem(CHALLENGE_STORAGE_KEY, JSON.stringify([...set]));
+}
+
+function clearChallenge() {
+  challengeState = {
+    active: false,
+    level: null,
+    id: null,
+    title: '',
+    goal: '',
+    humanColor: 'white',
+  };
+  $('#challenge-hud').prop('hidden', true).text('');
+}
+
+function updateChallengeHud() {
+  if (!challengeState.active) {
+    $('#challenge-hud').prop('hidden', true);
+    return;
+  }
+  $('#challenge-hud')
+    .prop('hidden', false)
+    .html(
+      `<strong>闯关 ${challengeState.level}</strong> · ${escapeHtml(challengeState.title)}` +
+        ` · 目标：${escapeHtml(challengeState.goal)}` +
+        ` <button type="button" id="btn-challenge-quit" class="linkish">退出闯关</button>`
+    );
+}
+
+function maybeCompleteChallenge(data) {
+  if (!challengeState.active || !data || !data.game_over) return;
+  const result = String(data.result || '');
+  const human = challengeState.humanColor;
+  const whiteWin = result.includes('白方');
+  const blackWin = result.includes('黑方');
+  const draw = result.includes('和棋') || result.includes('逼和');
+  let ok = false;
+  if (challengeState.goal && challengeState.goal.includes('守和')) {
+    ok = draw;
+  } else if (human === 'white') {
+    ok = whiteWin;
+  } else {
+    ok = blackWin;
+  }
+  if (!ok) {
+    $('#ai-meta').text(`闯关未过 · ${result || '再试一次'}`);
+    return;
+  }
+  markChallengeCleared(challengeState.id);
+  $('#ai-meta').text(`闯关成功！第 ${challengeState.level} 关已通关`);
+  $('#move-class').text('通关');
+  renderChallengeList();
+  const next = (challengeLevelsCache || []).find((lv) => lv.level === challengeState.level + 1);
+  if (next) {
+    setTimeout(() => {
+      if (confirm(`第 ${challengeState.level} 关通关！进入第 ${next.level} 关？`)) {
+        startChallengeLevel(next);
+      } else {
+        clearChallenge();
+      }
+    }, 400);
+  } else {
+    clearChallenge();
+    alert('全部关卡已通关！');
+  }
+}
+
+async function loadChallengeList() {
+  const box = $('#challenge-list');
+  try {
+    const r = await fetch(`${API}/challenges`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      box.html(`<div class="history-empty">闯关接口不可用（${r.status}）</div>`);
+      return;
+    }
+    challengeLevelsCache = data.levels || [];
+    renderChallengeList();
+  } catch (err) {
+    console.error(err);
+    box.html('<div class="history-empty">闯关列表加载失败</div>');
+  }
+}
+
+function renderChallengeList() {
+  const box = $('#challenge-list');
+  const cleared = new Set(getClearedChallenges());
+  const levels = challengeLevelsCache || [];
+  if (!levels.length) {
+    box.html('<div class="history-empty">暂无关卡</div>');
+    return;
+  }
+  box.empty();
+  levels.forEach((lv, idx) => {
+    const prevId = idx > 0 ? levels[idx - 1].id : null;
+    const unlocked = idx === 0 || cleared.has(prevId) || cleared.has(lv.id);
+    const done = cleared.has(lv.id);
+    const stars = '★'.repeat(lv.difficulty || 1) + '☆'.repeat(Math.max(0, 3 - (lv.difficulty || 1)));
+    const el = $('<article class="challenge-item"></article>');
+    if (!unlocked) el.addClass('is-locked');
+    if (done) el.addClass('is-done');
+    el.append(
+      `<div class="challenge-top">` +
+        `<span class="challenge-lv">第 ${lv.level} 关</span>` +
+        `<span class="challenge-stars">${stars}</span>` +
+        `</div>`
+    );
+    el.append(`<div class="challenge-title">${escapeHtml(lv.title)}</div>`);
+    el.append(`<div class="meta">目标：${escapeHtml(lv.goal || '')}</div>`);
+    if (lv.blurb) el.append(`<div class="blurb">${escapeHtml(lv.blurb)}</div>`);
+    const row = $('<div class="row"></div>');
+    if (!unlocked) {
+      row.append('<span class="challenge-lock">先通上一关</span>');
+    } else {
+      row.append(
+        $(`<button type="button" class="accent">${done ? '再战' : '开始'}</button>`).on(
+          'click',
+          () => startChallengeLevel(lv)
+        )
+      );
+      if (done) row.append('<span class="challenge-done">已通关</span>');
+    }
+    el.append(row);
+    box.append(el);
+  });
+}
+
+async function startChallengeLevel(lv) {
+  if (online.active) {
+    alert('请先退出联机');
+    return;
+  }
+  stopAuto();
+  stopLibraryAuto();
+  hideFinale();
+  clearChallenge();
+  const body = {
+    mode: 'human_vs_ai',
+    with_analysis: false,
+    human_color: lv.human_color || 'white',
+    free_play: true,
+    engine_depth: 8,
+  };
+  const r = await fetch(`${API}/library/${encodeURIComponent(lv.id)}/load`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const state = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    alert(JSON.stringify(state.detail || state));
+    return;
+  }
+  challengeState = {
+    active: true,
+    level: lv.level,
+    id: lv.id,
+    title: lv.title,
+    goal: lv.goal || '',
+    humanColor: lv.human_color || 'white',
+  };
+  applyServerState(state);
+  clearLastMoveMarkers();
+  plyLog = [];
+  viewPly = 0;
+  browsingHistory = false;
+  game.load(state.fen);
+  board.position(state.fen, false);
+  selectedSquare = null;
+  clearHighlights();
+  syncPlyLogFromMoves(state.moves || []);
+  if ((lv.human_color || 'white') === 'black') {
+    orientation = 'black';
+    board.orientation('black');
+  } else {
+    orientation = 'white';
+    board.orientation('white');
+  }
+  $('#game-mode').val('human_vs_ai');
+  $('#human-color').val(lv.human_color || 'white');
+  $('#with-analysis').prop('checked', false);
+  refreshModeControls();
+  updateStatus();
+  updateChallengeHud();
+  renderMoveList();
+  $('#ai-meta').text(`闯关第 ${lv.level} 关 · ${lv.title}`);
+  switchWorkspace('play');
+}
+
+$('.learn-mode-tab').click(function () {
+  const mode = $(this).attr('data-learn');
+  $('.learn-mode-tab').removeClass('active');
+  $(this).addClass('active');
+  if (mode === 'challenge') {
+    $('#learn-library').attr('hidden', true);
+    $('#learn-challenge').removeAttr('hidden');
+    loadChallengeList();
+  } else {
+    $('#learn-challenge').attr('hidden', true);
+    $('#learn-library').removeAttr('hidden');
+    loadLibraryList();
+  }
+});
+
+$(document).on('click', '#btn-challenge-quit', () => {
+  clearChallenge();
+  $('#ai-meta').text('已退出闯关');
+});
 
 $('.lib-filter').click(function () {
   $('.lib-filter').removeClass('active');

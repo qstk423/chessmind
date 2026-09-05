@@ -70,6 +70,9 @@ class SaveGameRequest(BaseModel):
 class LibraryLoadRequest(BaseModel):
     mode: Literal["human_vs_human", "human_vs_ai", "ai_vs_ai"] | None = None
     with_analysis: bool | None = None
+    human_color: Literal["white", "black"] | None = None
+    free_play: bool = False
+    engine_depth: int | None = Field(default=None, ge=1, le=25)
 
 
 class LibraryStepRequest(BaseModel):
@@ -276,11 +279,29 @@ def library_list(category: str | None = Query(None, description="game|endgame|pu
     return {"items": list_library(category=category)}
 
 
+@router.get("/challenges")
+def challenges_list():
+    """残局闯关关卡列表。"""
+    from src.library.challenges import list_challenges
+
+    return {"levels": list_challenges()}
+
+
 @router.post("/library/{item_id}/load")
 def library_load(item_id: str, req: LibraryLoadRequest | None = None):
     mode = None if req is None else req.mode
     with_analysis = None if req is None else req.with_analysis
-    state = orchestrator.load_library(item_id, mode=mode, with_analysis=with_analysis)
+    human_color = None if req is None else req.human_color
+    free_play = False if req is None else req.free_play
+    engine_depth = None if req is None else req.engine_depth
+    state = orchestrator.load_library(
+        item_id,
+        mode=mode,
+        with_analysis=with_analysis,
+        human_color=human_color,
+        free_play=free_play,
+        engine_depth=engine_depth,
+    )
     if "error" in state:
         raise HTTPException(status_code=404, detail=state)
     return {"status": "ok", **state}

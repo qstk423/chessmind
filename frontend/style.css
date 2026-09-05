@@ -359,6 +359,125 @@ button.ghost:hover {
   color: var(--gold);
   background: #1f4636;
 }
+
+.learn-mode-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+.learn-mode-tab {
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.learn-mode-tab.active {
+  background: rgba(210, 176, 106, 0.18);
+  color: var(--ink);
+  border-color: rgba(210, 176, 106, 0.45);
+}
+.challenge-hud {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(210, 176, 106, 0.35);
+  background: rgba(210, 176, 106, 0.08);
+  color: var(--ink-dim);
+  font-size: 0.86rem;
+}
+.challenge-hud .linkish {
+  margin-left: 8px;
+  border: 0;
+  background: none;
+  color: var(--gold);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+.challenge-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  max-height: min(52vh, 520px);
+  overflow: auto;
+}
+.challenge-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(210, 176, 106, 0.22);
+  border-radius: 12px;
+  background: linear-gradient(165deg, rgba(33, 69, 54, 0.95), rgba(14, 36, 27, 0.98));
+}
+.challenge-item.is-locked { opacity: 0.55; }
+.challenge-item.is-done {
+  box-shadow: inset 0 0 0 1px rgba(127, 175, 141, 0.45);
+}
+.challenge-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--gold);
+}
+.challenge-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--ink);
+}
+.challenge-lock, .challenge-done {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.challenge-done { color: #9fd4a8; }
+
+.accuracy-panel {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 10px 0 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(210, 176, 106, 0.28);
+  background: linear-gradient(120deg, rgba(210, 176, 106, 0.14), rgba(18, 41, 31, 0.7));
+}
+.accuracy-score {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  min-width: 72px;
+}
+.accuracy-num {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--gold);
+  line-height: 1;
+}
+.accuracy-unit {
+  color: var(--ink-dim);
+  font-size: 0.9rem;
+}
+.accuracy-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.84rem;
+  color: var(--ink-dim);
+}
+.accuracy-copy strong { color: var(--ink); }
+.accuracy-note { font-size: 0.74rem; color: var(--muted); }
+.accuracy-empty {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .lib-actions {
   display: flex;
   flex-wrap: wrap;

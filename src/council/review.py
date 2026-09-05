@@ -147,9 +147,61 @@ def _thin_eval_curve(
     return out
 
 
+CLASS_ACCURACY = {
+    "brilliant": 100.0,
+    "great": 95.0,
+    "best": 100.0,
+    "good": 80.0,
+    "book": 90.0,
+    "inaccuracy": 50.0,
+    "mistake": 20.0,
+    "blunder": 0.0,
+}
+
+
+def compute_accuracy(move_records: list[dict[str, Any]]) -> dict[str, Any]:
+    """按走子分类估算准确率（0–100），分白/黑与总评。"""
+    white: list[float] = []
+    black: list[float] = []
+    for rec in move_records:
+        if rec.get("position_only"):
+            continue
+        move = rec.get("move") or {}
+        san = move.get("san")
+        if san in (None, "", "局面分析", "终局复盘"):
+            continue
+        cls = (rec.get("evaluation") or {}).get("classification") or "good"
+        if cls == "position":
+            continue
+        pts = float(CLASS_ACCURACY.get(cls, 70.0))
+        fen_before = rec.get("fen_before") or ""
+        parts = fen_before.split()
+        if len(parts) > 1 and parts[1] in ("w", "b"):
+            mover = parts[1]
+        else:
+            num = int(move.get("number") or 0)
+            mover = "w" if num % 2 == 1 else "b"
+        (white if mover == "w" else black).append(pts)
+
+    def _avg(xs: list[float]) -> float | None:
+        return round(sum(xs) / len(xs), 1) if xs else None
+
+    overall_list = white + black
+    return {
+        "overall": _avg(overall_list),
+        "white": _avg(white),
+        "black": _avg(black),
+        "white_moves": len(white),
+        "black_moves": len(black),
+        "scale": "0-100",
+        "note": "由引擎走子分类换算（妙手/好棋/缓着/漏着/大漏）",
+    }
+
+
 def build_review(move_records: list[dict[str, Any]], *, game_result: str | None, pgn: str) -> dict[str, Any]:
     """根据逐步分析结果生成复盘摘要（不调用 LLM，确定性、可演示）。"""
     eval_curve = build_eval_curve(move_records)
+    accuracy = compute_accuracy(move_records)
     if not move_records:
         return {
             "title": "本局复盘",
@@ -162,6 +214,7 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
             "narrative": ["本局尚无走子记录。"],
             "pgn": pgn,
             "eval_curve": eval_curve,
+            "accuracy": accuracy,
         }
 
     counts: dict[str, int] = {}
@@ -211,6 +264,13 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
         f"本局共 {len(move_records)} 步/局面分析，结果：{game_result or '进行中/未知'}。",
         f"平均 AI 争议度 {round(avg_dg * 100)}%；触发辩论 {len(debates)} 次。",
     ]
+    if accuracy.get("overall") is not None:
+        narrative.insert(
+            1,
+            f"准确率 总评 {accuracy['overall']}%"
+            + (f"（白 {accuracy['white']}% / 黑 {accuracy['black']}%）" if accuracy.get("white") is not None else "")
+            + "。",
+        )
     pos_only = [r for r in move_records if r.get("position_only") or (r.get("move") or {}).get("san") == "局面分析"]
     if pos_only:
         narrative.insert(
@@ -252,4 +312,5 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
         "narrative": narrative,
         "pgn": pgn,
         "eval_curve": eval_curve,
+        "accuracy": accuracy,
     }
