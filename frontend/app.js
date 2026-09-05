@@ -763,10 +763,24 @@ $('#btn-review').click(async () => {
   }
 });
 
+async function openPitchReviewAndLogs() {
+  switchWorkspace('more');
+  $('#btn-review').click();
+  const logsEl = document.getElementById('logs-section');
+  if (logsEl) logsEl.open = true;
+  refreshLogs();
+}
+
+function showPitchCue(html) {
+  const el = $('#pitch-cue');
+  el.html(html).prop('hidden', false);
+}
+
 async function runDemoById(demoId, title) {
   if (busy) return;
   busy = true;
   stopAuto();
+  $('#pitch-cue').prop('hidden', true);
   setProgress(`路演 Council：${title || demoId}`);
   $('#ai-meta').text(`加载 Demo：${title || demoId} …`);
   try {
@@ -798,6 +812,10 @@ async function runDemoById(demoId, title) {
         $('.tab[data-tab="debate"]').addClass('active');
         $('#tab-debate').addClass('active');
       }
+      showPitchCue(
+        '<strong>路演下一步：</strong>已打开复盘与调用证明。然后到「对弈设置 → 高级选项 → 快速 AI 对战」演示算法对抗。'
+      );
+      await openPitchReviewAndLogs();
     }
   } finally {
     setProgress(null);

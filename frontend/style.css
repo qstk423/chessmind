@@ -67,6 +67,19 @@ body {
 }
 .council-progress[hidden] { display: none !important; }
 
+.pitch-cue {
+  margin: -4px 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(210, 176, 106, 0.35);
+  background: rgba(210, 176, 106, 0.12);
+  color: var(--ink);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+.pitch-cue[hidden] { display: none !important; }
+.pitch-cue strong { color: var(--gold); }
+
 .workspace-nav {
   display: flex;
   flex-wrap: wrap;

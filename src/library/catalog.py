@@ -5,7 +5,6 @@ from typing import Any
 
 # moves 为 UCI；空列表表示仅局面体验（残局自己下 / AI 代下）
 LIBRARY: dict[str, dict[str, Any]] = {
-    # ── 名局 ──
     "opera": {
         "id": "opera",
         "category": "game",
@@ -88,11 +87,8 @@ LIBRARY: dict[str, dict[str, Any]] = {
         "title": "学者将死 · Scholar's Mate",
         "blurb": "最快入门杀法之一：瞄准 f7，四步示范（含黑方常见失误）。",
         "players": "教学示例",
-        "year": None,
         "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        "moves": [
-            "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7",
-        ],
+        "moves": ["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"],
         "tags": ["beginner", "mate"],
     },
     "fools_mate": {
@@ -101,7 +97,6 @@ LIBRARY: dict[str, dict[str, Any]] = {
         "title": "愚人将死 · Fool's Mate",
         "blurb": "棋史上最短将杀：白方乱推王翼兵，黑后两步绝杀。",
         "players": "教学示例",
-        "year": None,
         "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "moves": ["f2f3", "e7e5", "g2g4", "d8h4"],
         "tags": ["beginner", "mate"],
@@ -126,7 +121,6 @@ LIBRARY: dict[str, dict[str, Any]] = {
         "title": "意大利局 · 炸肝攻击",
         "blurb": "两马开局炸肝：弃马打 f7，进入激烈攻杀结构（演示到关键弃子）。",
         "players": "教学示例",
-        "year": None,
         "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "moves": [
             "e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "f3g5", "d7d5",
@@ -134,8 +128,6 @@ LIBRARY: dict[str, dict[str, Any]] = {
         ],
         "tags": ["attack", "opening", "italian"],
     },
-
-    # ── 残局 ──
     "lucena": {
         "id": "lucena",
         "category": "endgame",
@@ -202,8 +194,6 @@ LIBRARY: dict[str, dict[str, Any]] = {
         "tags": ["endgame", "queen"],
         "goal": "白方将杀",
     },
-
-    # ── 战术 / 残局名局片段 ──
     "arabian": {
         "id": "arabian",
         "category": "puzzle",
@@ -248,6 +238,224 @@ LIBRARY: dict[str, dict[str, Any]] = {
         "goal": "白方演示弃象攻王主线",
         "diverge": True,
     },
+    "reti_tartakower": {
+        "id": "reti_tartakower",
+        "category": "game",
+        "title": "Réti 弃后杀 · Tartakower",
+        "blurb": "雷蒂经典弃后双将杀：Qd8+ 后车将绝杀。",
+        "players": "Réti vs Tartakower",
+        "year": 1910,
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+            "e2e4", "c7c6", "d2d4", "d7d5", "b1c3", "d5e4", "c3e4", "g8f6",
+            "d1d3", "e7e5", "d4e5", "d8a5", "c1d2", "a5e5", "e1c1", "f6e4",
+            "d3d8", "e8d8", "d2g5", "d8e8", "d1d8",
+        ],
+        "tags": ["classic", "queen_sac", "mate"],
+    },
+    "shilling": {
+        "id": "shilling",
+        "category": "game",
+        "title": "布莱克本先令陷阱",
+        "blurb": "意大利局冷门陷阱：黑马入中心诱白吃兵，终局闷杀白王。",
+        "players": "教学示例",
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+            "e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "c6d4", "f3e5", "d8g5",
+            "e5f7", "g5g2", "h1f1", "g2e4", "c4e2", "d4f3",
+        ],
+        "tags": ["trap", "mate"],
+    },
+    "elephant": {
+        "id": "elephant",
+        "category": "game",
+        "title": "大象陷阱",
+        "blurb": "后兵开局经典陷阱：白马误吃中心兵后丢后。",
+        "players": "教学示例",
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+            "d2d4", "d7d5", "c2c4", "e7e6", "b1c3", "g8f6", "c1g5", "b8d7",
+            "c4d5", "e6d5", "c3d5", "f6d5", "g5d8", "f8b4", "d1d2", "b4d2",
+            "e1d2", "e8d8",
+        ],
+        "tags": ["trap", "opening"],
+    },
+    "greco": {
+        "id": "greco",
+        "category": "game",
+        "title": "格列科杀局",
+        "blurb": "早期古典杀法：弃后诱开 g 线，象到 g6 闷杀。",
+        "players": "Greco",
+        "year": 1620,
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+            "e2e4", "b7b6", "d2d4", "c8b7", "f1d3", "f7f5", "e4f5", "b7g2",
+            "d1h5", "g7g6", "f5g6", "g8f6", "g6h7", "f6h5", "d3g6",
+        ],
+        "tags": ["classic", "mate"],
+    },
+    "fishing_pole": {
+        "id": "fishing_pole",
+        "category": "game",
+        "title": "钓鱼竿陷阱",
+        "blurb": "西班牙开局：马到 g4 诱 h3，开 h 线攻王翼。",
+        "players": "教学示例",
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+            "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "g8f6", "e1g1", "f6g4",
+            "h2h3", "h7h5", "h3g4", "h5g4", "f3e5", "d8h4",
+        ],
+        "tags": ["trap", "attack"],
+    },
+    "damiano": {
+        "id": "damiano",
+        "category": "game",
+        "title": "达米亚诺防御陷阱",
+        "blurb": "过早 f6 削弱王翼：白吃 e5 后后攻杀。",
+        "players": "教学示例",
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+            "e2e4", "e7e5", "g1f3", "f7f6", "f3e5", "f6e5", "d1h5", "g7g6",
+            "h5e5", "d8e7", "e5h8",
+        ],
+        "tags": ["trap", "beginner"],
+    },
+    "englund": {
+        "id": "englund",
+        "category": "game",
+        "title": "恩格隆德弃兵陷阱",
+        "blurb": "1.d4 e5 陷阱线：黑后骚扰后翼得兵。",
+        "players": "教学示例",
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+            "d2d4", "e7e5", "d4e5", "b8c6", "g1f3", "d8e7", "b1c3", "e7b4",
+            "c1d2", "b4b2",
+        ],
+        "tags": ["trap", "gambit"],
+    },
+    "stafford": {
+        "id": "stafford",
+        "category": "game",
+        "title": "斯塔福德弃兵速攻",
+        "blurb": "彼得罗夫变例：黑弃马抢攻，适合快节奏演示。",
+        "players": "教学示例",
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+            "e2e4", "e7e5", "g1f3", "g8f6", "f3e5", "b8c6", "e5c6", "d7c6",
+            "e4e5", "f6e4", "d2d3", "f8c5", "d3e4", "c5f2",
+        ],
+        "tags": ["gambit", "attack"],
+    },
+    "kqk": {
+        "id": "kqk",
+        "category": "endgame",
+        "title": "后杀单王",
+        "blurb": "基础杀王：用后把王逼到底线绝杀。",
+        "fen": "4k3/8/4K3/8/8/8/3Q4/8 w - - 0 1",
+        "moves": ["d2d7", "e8f8", "d7f7"],
+        "tags": ["mate_technique"],
+        "goal": "白方将杀",
+    },
+    "krk": {
+        "id": "krk",
+        "category": "endgame",
+        "title": "车杀单王",
+        "blurb": "基础杀王：车到边线绝杀。",
+        "fen": "4k3/8/4K3/8/8/8/8/R7 w - - 0 1",
+        "moves": ["a1a8"],
+        "tags": ["mate_technique"],
+        "goal": "白方将杀",
+    },
+    "ladder_mate": {
+        "id": "ladder_mate",
+        "category": "endgame",
+        "title": "双车梯子杀",
+        "blurb": "双车交替将军：两步梯子杀。",
+        "fen": "8/4k3/8/8/8/8/1R2K3/R7 w - - 0 1",
+        "moves": ["a1a7", "e7e8", "b2b8"],
+        "tags": ["mate_technique"],
+        "goal": "白方将杀",
+    },
+    "anastasia": {
+        "id": "anastasia",
+        "category": "puzzle",
+        "title": "阿纳斯塔西娅杀",
+        "blurb": "马控制逃逸格，车到底线绝杀。",
+        "fen": "6k1/5ppp/8/8/8/5N2/8/4R1K1 w - - 0 1",
+        "moves": ["e1e8"],
+        "tags": ["mate", "pattern"],
+        "goal": "白方一步杀",
+    },
+    "corridor": {
+        "id": "corridor",
+        "category": "puzzle",
+        "title": "走廊杀",
+        "blurb": "底线走廊：车到 e8 绝杀。",
+        "fen": "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1",
+        "moves": ["e1e8"],
+        "tags": ["mate", "back_rank"],
+        "goal": "白方一步杀",
+    },
+    "knight_fork": {
+        "id": "knight_fork",
+        "category": "puzzle",
+        "title": "马将军叉",
+        "blurb": "马跳 e7 将军，体验马的战术几何。",
+        "fen": "6k1/5ppp/8/3N4/8/8/5PPP/R5K1 w - - 0 1",
+        "moves": ["d5e7"],
+        "tags": ["tactic", "fork"],
+        "goal": "白方将军得先",
+    },
+    "pin_back": {
+        "id": "pin_back",
+        "category": "puzzle",
+        "title": "钉死兑换",
+        "blurb": "车钉死兑换，制造底线压力。",
+        "fen": "2r3k1/5ppp/8/8/8/8/5PPP/2R3K1 w - - 0 1",
+        "moves": ["c1c8"],
+        "tags": ["tactic", "pin"],
+        "goal": "白方得子",
+    },
+    "decoy_backrank": {
+        "id": "decoy_backrank",
+        "category": "puzzle",
+        "title": "引诱底线杀",
+        "blurb": "车到 d8：经典底线杀。",
+        "fen": "6k1/3R1ppp/8/8/8/8/5PPP/6K1 w - - 0 1",
+        "moves": ["d7d8"],
+        "tags": ["mate", "back_rank"],
+        "goal": "白方一步杀",
+    },
+    "remove_guard": {
+        "id": "remove_guard",
+        "category": "puzzle",
+        "title": "底线杀 · 无守卫",
+        "blurb": "底线直接杀：后翼守卫缺位。",
+        "fen": "6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1",
+        "moves": ["d1d8"],
+        "tags": ["tactic", "mate"],
+        "goal": "白方杀棋",
+    },
+    "skewer": {
+        "id": "skewer",
+        "category": "puzzle",
+        "title": "串击得后",
+        "blurb": "车到 a8 串击：王走后吃后。",
+        "fen": "7k/8/1q6/8/8/8/8/R3K3 w - - 0 1",
+        "moves": ["a1a8", "h8g7", "a8a7", "g7f6", "a7b7"],
+        "tags": ["tactic"],
+        "goal": "白方得子",
+    },
+    "queen_backrank": {
+        "id": "queen_backrank",
+        "category": "puzzle",
+        "title": "后底线杀",
+        "blurb": "后到底线绝杀（无守卫）。",
+        "fen": "6k1/5ppp/8/8/8/8/5PPP/3Q2K1 w - - 0 1",
+        "moves": ["d1d8"],
+        "tags": ["mate", "back_rank"],
+        "goal": "白方杀棋",
+    }
 }
 
 CATEGORY_LABELS = {
@@ -263,7 +471,6 @@ def list_library(*, category: str | None = None) -> list[dict[str, Any]]:
         if category and entry["category"] != category:
             continue
         items.append(_public(entry))
-    # 稳定排序：名局 → 残局 → 战术
     order = {"game": 0, "endgame": 1, "puzzle": 2}
     items.sort(key=lambda x: (order.get(x["category"], 9), x["title"]))
     return items

@@ -14,5 +14,8 @@ venv/
 # LLM 调用日志（可本地保留作提交证明，默认不入库）
 logs/
 
+# 路演证据包（含完整调用日志，本地生成；勿提交密钥痕迹）
+docs/pitch/evidence/
+
 # SQLite 对局库
 data/
