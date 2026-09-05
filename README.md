@@ -1,170 +1,213 @@
 # ChessCouncil
 
-基于多智能体协作辩论的实时国际象棋分析与对战系统（由 ChessMind 增量升级）。
+**多智能体辩论式国际象棋分析与对战系统。**
 
-> 战术 / 战略 / 风险三类异质 Agent 并行分析；出现明显分歧时触发辩论与交叉质询；Stockfish 提供客观计算并参与仲裁；教练按用户水平生成可解释讲解。支持人机对弈与 AI vs AI 算法对抗。
+三个异质 Agent（战术 / 战略 / 风险）并行给意见；分歧够大时再辩论、质询、仲裁；Stockfish 提供客观计算；教练按水平把结论讲成人话。人机对弈、AI 互搏、名局学习、残局闯关、联机、识谱，共用同一套后端。
 
-面向 **天津移动 Token 算力大赛 · 赛道二** 时，运行态切换到官方 `glm-5.1` 即可；开发期可用阿里云千问等 OpenAI 兼容接口。冲奖操作、录屏分镜与证据包见 [`docs/COMPETE.md`](docs/COMPETE.md)。
+> 仓库名历史原因仍为 `chessmind`；产品名以 **ChessCouncil** 为准。
 
-## 功能一览
+面向 [天津移动 Token 算力大赛 · 赛道二](docs/COMPETE.md) 时可切官方 `glm-5.1`；日常开发可用任意 OpenAI 兼容接口（如千问）。
 
-- **完整对局循环**：人人分析 / 人 vs AI / AI vs AI
-- **算法对抗**：LLM 合法着法选着 vs Stockfish；非法着法自动回退引擎
-- **ChessCouncil 流水线**：结构化 JSON 意见 → 争议度 → 辩论（可选）→ 仲裁 → 教练讲解
-- **快评 / 深评**：快评只出三方意见+教练；深评才触发分歧辩论
-- **着法列表与回放**：机机象棋式着法条、方向键 / 按钮回放；复盘曲线可点跳转
-- **走子轨迹**：半透明起点 + 虚线路径 + 终点高亮（JJ 风格）
-- **路演 Demo**：希腊赠礼等高争议局面一键 Council
-- **赛后复盘**：争议步、辩论次数、叙事与 PGN
-- **多模态识谱**：棋盘截图 → FEN，支持格子纠错后再分析
-- **对局历史**：SQLite 持久化，可恢复局面
-- **名局 / 残局库**：36+ 条目（名局陷阱、杀王残局、战术杀型），全部可跟谱演示或 AI 代下
-- **联机对弈**：创建房间码 / 分享链接，两人手机实时互下（WebSocket）
-- **路演快捷栏**：一键希腊赠礼 / 快速 AI 对战 / 调用证明
-- **离线前端资源**：jQuery / chessboard / 棋子图本地 vendor，弱网可演示
-- **终局结算动画**：双车错 / 底线杀 / 闷杀等杀型 CSS 结算
-- **调用日志**：`logs/llm_calls.jsonl`，便于大赛提交调用证明
-- **无 Key / 无引擎降级**：仍可打开 UI；LLM 与 Stockfish 缺失时软降级
-- **Docker**：`docker compose up` 一键部署（镜像内含 Stockfish）
-- **手机适配 / PWA**：窄屏底栏导航、触控目标加大；可「添加到主屏幕」
+---
 
-## 工作原理
+## 为什么这样设计
+
+国际象棋「能算」不难，难的是 **算得清楚、说得明白、还能吵出分歧**。ChessCouncil 把系统拆成两层：
+
+| 层 | 职责 | 当前实现 |
+|----|------|----------|
+| **Brain（服务端）** | 规则、引擎、LLM Council、对局/房间/学习库、持久化 | Python · FastAPI |
+| **Client（客户端）** | 棋盘交互、信息呈现、导航与触控体验 | 手机优先 Web / PWA |
+
+原则：
+
+1. **API 优先** — 所有能力经 HTTP/WebSocket 暴露；网页只是第一个客户端。
+2. **引擎与模型不进端** — Stockfish / LLM 留在服务端，客户端保持可替换（Web → 原生 App）。
+3. **手机优先** — 对弈 / 学习 / 联机 / 工具分页面 + 底栏；PC 宽屏布局后置。
+4. **可降级** — 无 Key、无引擎时 UI 仍可打开，分析与选着软降级。
 
 ```
-现实棋盘 / 截图 / 数字棋盘
-        ↓
-结构化局面（FEN + python-chess 接地事实）
-        ↓
-Stockfish 评估 / PV / 走子分类
-        ↓
-战术 · 战略 · 风险  Agent（并行，JSON）
-        ↓
-分歧检测（争议度 0~1）
-   ↙            ↘
-共识裁决      风险质询 → 答辩 → 仲裁官
-        ↓
-教练（beginner / intermediate / advanced）
-        ↓
-前端可视化 + 赛后复盘
+截图 / 数字棋盘 / 联机房间
+            ↓
+     FEN + python-chess
+            ↓
+     Stockfish 评估 / 分类
+            ↓
+   战术 · 战略 · 风险（并行 JSON）
+            ↓
+        分歧检测
+       ↙        ↘
+   共识裁决    辩论 → 仲裁
+            ↓
+          教练讲解
+            ↓
+     Web / 未来原生客户端
 ```
 
-## 环境要求
+---
+
+## 现在能做什么
+
+**对弈**
+
+- 人 vs AI / 人人 / AI vs AI（LLM 选着 ↔ 引擎，非法着法回退）
+- 快评 / 深评 Council；着法列表、回放、速度控制；悔棋 / 提示
+- 终局杀型结算动画；赛后复盘与准确度相关能力
+
+**学习**
+
+- 名局 / 残局 / 战术库（跟谱演示或 AI 代下）
+- 残局闯关（通关解锁）
+
+**联机**
+
+- 房间码 / 分享链接，WebSocket 实时同步（适合同 Wi‑Fi 演示）
+
+**工具**
+
+- 拍照识谱 → FEN（可纠错再分析）
+- 对局历史（SQLite）、PGN、路演 Demo、调用日志
+
+**交付形态**
+
+- 手机优先多页 UI + PWA（可「添加到主屏幕」）
+- Docker 一键部署（镜像含 Stockfish）
+- 冒烟测试与基础限流 / 超时护栏（邀请试用向）
+
+---
+
+## 快速开始
+
+### 环境
 
 - Python ≥ 3.10
-- Stockfish（`brew install stockfish` 或 `apt install stockfish`）
-- LLM API Key（OpenAI 兼容）
+- [Stockfish](https://stockfishchess.org/)（`brew install stockfish` / `apt install stockfish`）
+- OpenAI 兼容的 `LLM_API_KEY`（可空，则纯引擎降级）
 
-## 快速启动
+### 本地运行
 
 ```bash
 git clone https://github.com/qstk423/chessmind.git
 cd chessmind
 python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env        # 填入 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
-# 推荐：只保留一个 8000，避免旧进程导致接口 404
+cp .env.example .env               # 填写 LLM_* ；可选 STOCKFISH_PATH
 chmod +x scripts/run_dev.sh
-./scripts/run_dev.sh
-# 或：python -m src.main
+./scripts/run_dev.sh               # 或: python -m src.main
 ```
 
-打开 http://127.0.0.1:8000  
+浏览器打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
 
-**手机：** 电脑用 `HOST=0.0.0.0` 启动后，手机浏览器打开 `http://<电脑局域网IP>:8000`，Safari/Chrome 可「添加到主屏幕」（PWA）。
-
-**局域网联机（两部手机）：** 电脑执行 `HOST=0.0.0.0 ./scripts/run_dev.sh`（或 `HOST=0.0.0.0 python -m src.main`），手机访问 `http://<电脑局域网IP>:8000`，点「创建房间」→「复制链接」发给对方。
-
-### Docker 一键部署
+**手机（推荐演示路径）**
 
 ```bash
-cp .env.example .env   # 填入 Key
+HOST=0.0.0.0 ./scripts/run_dev.sh
+```
+
+手机与电脑同一局域网，浏览器打开 `http://<电脑局域网IP>:8000`，可「添加到主屏幕」。联机：一机创建房间 → 复制链接给另一台手机。
+
+### Docker
+
+```bash
+cp .env.example .env   # 填 Key
 docker compose up --build
 ```
 
-服务监听 `http://127.0.0.1:8000`；对局库与日志挂载到 named volume。
+默认 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
 
-### 公开展示 / 可上线清单
-
-本项目适合 **单机演示或小范围邀请试用**（进程内共享一盘棋）。公网暴露前请至少：
-
-1. `.env` 设置 `PUBLIC_DEMO=1` 与 `ADMIN_TOKEN=...`
-2. 收紧 `CORS_ORIGINS`（不要用 `*` 配凭证）
-3. 确认 `LLM_TIMEOUT_SEC` / `LLM_MAX_CONCURRENT` / 限流参数
-4. `docker compose up --build`，观察 healthcheck
-5. 跑冒烟：`./scripts/smoke.sh` 或 `pytest -q tests/test_api_smoke.py`
-
-已知边界：多访客会抢同一全局对局；联机房间是独立状态。账号体系 / 多租户不在本阶段范围。
-
-### `.env` 示例
-
-**开发（阿里云百炼千问）：**
+### 配置摘要
 
 ```ini
+# 开发示例（阿里云百炼）
 LLM_API_KEY=sk-xxxx
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL=qwen-plus
 VISION_MODEL=qwen-vl-plus
-STOCKFISH_PATH=stockfish
-COACH_LEVEL=intermediate
-DEBATE_THRESHOLD=0.5
+
+# 大赛运行态
+# LLM_MODEL=glm-5.1
+# LLM_API_KEY / LLM_BASE_URL = 主办方下发
+
+HOST=0.0.0.0
+PORT=8000
 ```
 
-**大赛运行态（Token 下发后）：**
+公网小范围试用前建议：`PUBLIC_DEMO=1`、`ADMIN_TOKEN=...`、收紧 `CORS_ORIGINS`，并跑：
 
-```ini
-LLM_API_KEY=<天津移动下发>
-LLM_BASE_URL=<天津移动下发>
-LLM_MODEL=glm-5.1
+```bash
+./scripts/smoke.sh
+# 或: pytest -q tests/test_api_smoke.py
 ```
 
-## 主要 API
+已知边界：默认进程内共享「单盘分析对局」；联机房间是独立状态。完整账号 / 多租户不在当前范围。
 
-| 端点 | 说明 |
-|---|---|
-| `POST /api/game/new` | 新对局（`mode` / `coach_level` / `with_analysis` …） |
-| `POST /api/game/move` | 人类走子 |
-| `POST /api/game/ai-step` | AI 走一步 |
-| `POST /api/game/analyze-position` | 分析当前局面（不走子） |
-| `GET /api/game/review` | 赛后复盘报告 |
-| `GET /api/demos` | 路演 Demo 列表 |
-| `POST /api/demos/{id}/run` | 加载 Demo 并跑 Council |
-| `POST /api/vision/fen` | 上传截图识别 FEN |
-| `POST /api/game/save` | 手动保存当前对局到 SQLite |
-| `GET /api/games` | 对局历史列表 |
-| `POST /api/games/{id}/restore` | 恢复历史局面 |
-| `POST /api/fen/set-square` | FEN 纠错：改格子 |
-| `GET /api/library` | 名局/残局/战术库列表 |
-| `POST /api/library/{id}/load` | 加载学习条目 |
-| `POST /api/library/step` | 名谱下一步 |
-| `POST /api/rooms` | 创建联机房间 |
-| `POST /api/rooms/{id}/join` | 加入房间 |
-| `WS /api/rooms/{id}/ws?token=` | 实时同步走子 |
-| `GET /api/health?ping_llm=true` | 健康检查 |
-| `GET /api/logs/recent` | 最近 LLM 调用日志 |
+---
 
-走子 / 局面分析响应中的 `analysis.council` 包含：`agents`、`disagreement`、`debate`、`verdict`。
-
-## 项目结构
+## 仓库结构
 
 ```
 src/
-├── main.py                 # FastAPI 入口
-├── config.py
-├── llm_logger.py           # JSONL 调用证明
-├── orchestrator.py         # 对局 + Council 编排
-├── api/routes.py
-├── board/                  # 棋局、Stockfish、识谱
-├── agents/                 # 战术/战略/风险/教练/选着 + schema
-└── council/                # 分歧检测、辩论、复盘、Demo
-frontend/                   # 棋室风格 UI
-docs/COMPETE.md             # 大赛路演与提交清单
+├── main.py              # FastAPI 入口
+├── orchestrator.py      # 对局 + Council 编排
+├── api/                 # HTTP / WebSocket 路由
+├── board/               # 棋局、引擎、识谱、杀型
+├── agents/              # 战术 / 战略 / 风险 / 教练 / 选着
+├── council/             # 分歧、辩论、复盘、Demo
+├── library/             # 名局库与闯关
+├── rooms.py / storage.py
+frontend/                # 手机优先多页 + PWA
+├── index.html           # 对弈
+├── learn.html           # 学习
+├── online.html          # 联机
+├── tools.html           # 工具
+docs/COMPETE.md          # 大赛路演与证据包
+tests/                   # API 冒烟
 ```
 
-## 大赛提交
+---
 
-详见 [`docs/COMPETE.md`](docs/COMPETE.md)：5 分钟路演脚本、调用证明、Demo 操作顺序。
+## 主要 API（客户端契约）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/game/new` | 新对局 |
+| `POST` | `/api/game/move` | 人类走子 |
+| `POST` | `/api/game/ai-step` | AI 一步 |
+| `POST` | `/api/game/analyze-position` | 只分析不走子 |
+| `GET` | `/api/game/review` | 赛后复盘 |
+| `GET` | `/api/library` | 学习库列表 |
+| `POST` | `/api/library/{id}/load` | 加载条目 |
+| `POST` | `/api/rooms` · `.../join` | 联机房间 |
+| `WS` | `/api/rooms/{id}/ws?token=` | 实时同步 |
+| `POST` | `/api/vision/fen` | 识谱 |
+| `GET` | `/api/health` | 健康检查 |
+| `GET` | `/api/logs/recent` | LLM 调用日志（管理口令） |
+
+走子 / 分析响应中的 `analysis.council` 含 `agents`、`disagreement`、`debate`、`verdict`。完整路演与提交清单见 [`docs/COMPETE.md`](docs/COMPETE.md)。
+
+---
+
+## 路线图（架构视角）
+
+**已落地**
+
+- Council 流水线 + 可演示的手机 Web 客户端
+- 学习 / 闯关 / 联机 / 识谱 / PWA 壳
+- Docker 与基础上线护栏
+
+**合理下一步（不绑定本仓库是否已开工）**
+
+1. **冻结 API 契约** — 把上表沉淀为稳定文档（或 OpenAPI），作为第二客户端的唯一对接面  
+2. **公网部署** — 固定 HTTPS 域名后，手机才真正「装完就能玩」  
+3. **安卓原生客户端（可选）** — Kotlin + Jetpack Compose；棋盘与导航原生，Brain 仍走本仓库 API  
+4. **iOS** — 同一契约下的 SwiftUI 客户端  
+5. **多租户 / 账号** — 仅在需要公开运营时再上
+
+原生客户端是 **换壳，不换脑**：先把服务端当产品真相来源，再谈商店与安装包。
+
+---
 
 ## License
 
-MIT
+[MIT](LICENSE)
