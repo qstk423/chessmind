@@ -17,8 +17,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="ChessMind",
-    description="国际象棋多 Agent 分析系统",
+    title="ChessCouncil",
+    description="多 Agent 协作辩论的实时国际象棋分析与对战系统",
     lifespan=lifespan,
 )
 

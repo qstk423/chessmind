@@ -1,123 +1,121 @@
-# ChessMind ♟️
+# ChessCouncil
 
-国际象棋多 Agent 实时分析系统——在自建棋盘上每走一步，战术 / 战略 / 开局三个 Agent 并行分析后汇总，Stockfish 引擎交叉验证。
+基于多智能体协作辩论的实时国际象棋分析与对战系统（由 ChessMind 增量升级）。
 
-## 功能特性
+> 战术 / 战略 / 风险三类异质 Agent 并行分析；出现明显分歧时触发辩论与交叉质询；Stockfish 提供客观计算并参与仲裁；教练按用户水平生成可解释讲解。支持人机对弈与 AI vs AI 算法对抗。
 
-- **自建对弈棋盘**：点击走子（选中高亮 + 合法点位提示 + 吃子标记），支持翻转棋盘、升变
-- **实时引擎评估**：每步走子前后各一次 Stockfish 深度评估，胜率条实时更新
-- **走子质量分类**：按走子方视角的评分变化，将每步棋分为 妙手 / 好棋 / 正常 / 缓着 / 漏着 / 大漏
-- **多 Agent 并行分析**：战术、战略、开局三个 Agent 同时分析，汇总 Agent 融合输出
-- **Agent 接地（Grounding）**：由 python-chess 提取结构化局面事实（子力、悬子、兵形、王安全、中心控制、开放线）并连同引擎最佳续着（PV）注入各 Agent 提示词，杜绝 LLM 误读 FEN
-- **PGN 复盘**：粘贴 PGN 棋谱逐步分析（独立于当前对局，支持 FEN 头自定义起始局面）
-- **无 Key 降级**：不配置 LLM API Key 也能完整使用引擎功能（评分 / 胜率 / 分类），Agent 文本分析自动跳过
+面向 **天津移动 Token 算力大赛 · 赛道二** 时，运行态切换到官方 `glm-5.1` 即可；开发期可用阿里云千问等 OpenAI 兼容接口。
+
+## 功能一览
+
+- **完整对局循环**：人人分析 / 人 vs AI / AI vs AI
+- **算法对抗**：LLM 合法着法选着 vs Stockfish；非法着法自动回退引擎
+- **ChessCouncil 流水线**：结构化 JSON 意见 → 争议度 → 辩论（可选）→ 仲裁 → 教练讲解
+- **走子轨迹**：半透明起点 + 虚线路径 + 终点高亮（JJ 风格）
+- **路演 Demo**：希腊赠礼等高争议局面一键 Council
+- **赛后复盘**：争议步、辩论次数、叙事与 PGN
+- **多模态识谱**：棋盘截图 → FEN（视觉大模型）
+- **调用日志**：`logs/llm_calls.jsonl`，便于大赛提交调用证明
+- **无 Key 降级**：仍可引擎对弈与评分；LLM 相关能力跳过或回退
 
 ## 工作原理
 
 ```
-走子请求
-   │
-   ├─ ① 走子前 Stockfish 评估（深度 15）
-   ├─ ② 执行走子（python-chess）
-   ├─ ③ 走子后 Stockfish 评估 + 走子分类（走子方视角）
-   ├─ ④ 结构化局面特征提取（接地上下文）
-   │
-   ├─ ⑤ 并行：战术 Agent ┐
-   │        战略 Agent ├── async 并发调用 LLM
-   │        开局 Agent ┘
-   │
-   └─ ⑥ 汇总 Agent：融合三份分析 + 引擎事实 → 统一棋评
+现实棋盘 / 截图 / 数字棋盘
+        ↓
+结构化局面（FEN + python-chess 接地事实）
+        ↓
+Stockfish 评估 / PV / 走子分类
+        ↓
+战术 · 战略 · 风险  Agent（并行，JSON）
+        ↓
+分歧检测（争议度 0~1）
+   ↙            ↘
+共识裁决      风险质询 → 答辩 → 仲裁官
+        ↓
+教练（beginner / intermediate / advanced）
+        ↓
+前端可视化 + 赛后复盘
 ```
-
-所有 Agent 的提示词中都注入了程序计算的确定性事实，汇总 Agent 被要求**以引擎事实为准**处理矛盾分析。
 
 ## 环境要求
 
-- **Python ≥ 3.10**（代码使用 `X | None` 语法，3.9 无法运行）
-- **Stockfish**
-  - macOS：`brew install stockfish`
-  - Ubuntu/Debian：`sudo apt install stockfish`
-- **LLM API Key（可选）**：支持 DeepSeek / OpenAI / 任何 OpenAI 兼容接口
+- Python ≥ 3.10
+- Stockfish（`brew install stockfish` 或 `apt install stockfish`）
+- LLM API Key（OpenAI 兼容）
 
 ## 快速启动
 
 ```bash
 git clone https://github.com/qstk423/chessmind.git
 cd chessmind
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-brew install stockfish            # 或 apt install stockfish
-cp .env.example .env              # 填入 LLM API Key（可留空，见下方降级说明）
+cp .env.example .env        # 填入 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
 python -m src.main
 ```
 
-打开 http://localhost:8000
+打开 http://127.0.0.1:8000
 
-### 配置说明（.env）
+### `.env` 示例
+
+**开发（阿里云百炼千问）：**
 
 ```ini
-LLM_API_KEY=sk-xxxx               # 留空 = 纯引擎模式
-LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL=deepseek-chat
-STOCKFISH_PATH=/opt/homebrew/bin/stockfish   # 按实际安装路径修改，留空则用 PATH 中的 stockfish
+LLM_API_KEY=sk-xxxx
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_MODEL=qwen-plus
+VISION_MODEL=qwen-vl-plus
+STOCKFISH_PATH=stockfish
+COACH_LEVEL=intermediate
+DEBATE_THRESHOLD=0.5
 ```
 
-**纯引擎模式**：未配置 Key 时，每步走子仍返回 Stockfish 评分、胜率与走子分类，仅 Agent 文本分析显示占位说明；配置后无需改代码，重启即生效。
+**大赛运行态（Token 下发后）：**
 
-## API 一览
-
-| 端点 | 方法 | 说明 |
-|---|---|---|
-| `/api/game/new` | POST | 开始新对局 |
-| `/api/game/move` | POST | 走一步棋（UCI，升变如 `e7e8q`），返回评分 / 分类 / Agent 分析 |
-| `/api/game/state` | GET | 当前棋局状态与 PGN |
-| `/api/analyze/pgn` | POST | 导入 PGN 逐步复盘（不影响当前对局） |
-
-走子响应示例（节选）：
-
-```json
-{
-  "move": { "san": "e4", "uci": "e2e4", "number": 1 },
-  "evaluation": {
-    "before": { "score_cp": 49, "win_prob_white": 0.557 },
-    "after":  { "score_cp": 46, "win_prob_white": 0.566, "pv": ["c5", "Nf3", "e6"] },
-    "classification": "good"
-  },
-  "analysis": { "tactical": "...", "strategic": "...", "pattern": "...", "summary": "..." },
-  "game_over": false,
-  "fen": "..."
-}
+```ini
+LLM_API_KEY=<天津移动下发>
+LLM_BASE_URL=<天津移动下发>
+LLM_MODEL=glm-5.1
 ```
+
+## 主要 API
+
+| 端点 | 说明 |
+|---|---|
+| `POST /api/game/new` | 新对局（`mode` / `coach_level` / `with_analysis` …） |
+| `POST /api/game/move` | 人类走子 |
+| `POST /api/game/ai-step` | AI 走一步 |
+| `POST /api/game/analyze-position` | 分析当前局面（不走子） |
+| `GET /api/game/review` | 赛后复盘报告 |
+| `GET /api/demos` | 路演 Demo 列表 |
+| `POST /api/demos/{id}/run` | 加载 Demo 并跑 Council |
+| `POST /api/vision/fen` | 上传截图识别 FEN |
+| `GET /api/health?ping_llm=true` | 健康检查 |
+| `GET /api/logs/recent` | 最近 LLM 调用日志 |
+
+走子 / 局面分析响应中的 `analysis.council` 包含：`agents`、`disagreement`、`debate`、`verdict`。
 
 ## 项目结构
 
 ```
 src/
-├── main.py                     # FastAPI 入口（lifespan 管理引擎生命周期）
-├── config.py                   # 环境变量配置
-├── orchestrator.py             # 多 Agent 编排总控
-├── api/routes.py               # 对弈 + PGN 复盘路由
-├── board/
-│   ├── game_state.py           # 走子记录、PGN 导出、终局判定
-│   ├── move_evaluator.py       # Stockfish 评分、走子方视角分类、胜率换算
-│   └── position_features.py    # 结构化局面特征提取（Agent 接地）
-└── agents/
-    ├── base_agent.py           # Agent 基类（LLM 调用、无 Key 降级、容错）
-    ├── tactical.py             # 战术 Agent：悬子/牵制/闪击/双捉/杀棋
-    ├── strategic.py            # 战略 Agent：兵形/中心/王安全/空间
-    ├── pattern.py              # 开局 Agent：体系识别/谱着判断/典型计划
-    └── summarizer.py           # 汇总 Agent：融合分析 + 引擎事实
-frontend/
-├── index.html                  # 棋盘 + 分析面板
-├── app.js                      # 点击走子、面板渲染（含 XSS 转义）
-└── style.css
+├── main.py                 # FastAPI 入口
+├── config.py
+├── llm_logger.py           # JSONL 调用证明
+├── orchestrator.py         # 对局 + Council 编排
+├── api/routes.py
+├── board/                  # 棋局、Stockfish、识谱
+├── agents/                 # 战术/战略/风险/教练/选着 + schema
+└── council/                # 分歧检测、辩论、复盘、Demo
+frontend/                   # 棋室风格 UI
+docs/COMPETE.md             # 大赛路演与提交清单
 ```
 
-## 已知技术要点
+## 大赛提交
 
-- chessboard.js v1.0.0 的走子动画在 jQuery 3.x 下 complete 回调不触发（棋子消失 / 克隆残留），前端统一使用瞬时渲染 `position(fen, false)`
-- python-chess 的 `engine.Cp` / `Mate` 对象不能直接参与算术运算，需 `.score()` 转换；`Mate.score()` 返回 `None` 需手工构造大数评分
-- PV（最佳续着）转 SAN 必须在逐步推演的棋盘上顺序生成
-- PGN 导出使用标准 Result 标记（`1-0` / `0-1` / `1/2-1/2`），中文结果仅用于界面展示
+详见 [`docs/COMPETE.md`](docs/COMPETE.md)：5 分钟路演脚本、调用证明、Demo 操作顺序。
 
 ## License
 

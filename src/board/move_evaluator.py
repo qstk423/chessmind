@@ -33,12 +33,27 @@ class MoveEvaluator:
             self._engine.quit()
             self._engine = None
 
-    async def evaluate(self, fen: str) -> dict:
+    async def evaluate(self, fen: str, depth: int | None = None) -> dict:
         """在线程池中执行同步引擎分析，避免阻塞事件循环"""
         async with self._lock:
-            return await asyncio.to_thread(self._evaluate_sync, fen)
+            return await asyncio.to_thread(self._evaluate_sync, fen, depth)
 
-    def _evaluate_sync(self, fen: str) -> dict:
+    async def best_move(self, fen: str, depth: int | None = None) -> str | None:
+        """返回引擎最佳着法 UCI；终局或无着法时返回 None。"""
+        async with self._lock:
+            return await asyncio.to_thread(self._best_move_sync, fen, depth)
+
+    def _best_move_sync(self, fen: str, depth: int | None = None) -> str | None:
+        board = chess.Board(fen)
+        if board.is_game_over():
+            return None
+        limit = chess.engine.Limit(depth=depth if depth is not None else self.depth)
+        result = self.engine.play(board, limit)
+        if result.move is None:
+            return None
+        return result.move.uci()
+
+    def _evaluate_sync(self, fen: str, depth: int | None = None) -> dict:
         """
         用 Stockfish 评估一个局面，返回：
         - score_cp: centipawn 评分（正=白优，负=黑优；将杀为接近 ±100000 的值）
@@ -61,7 +76,8 @@ class MoveEvaluator:
                 "is_mate": True,
             }
 
-        result = self.engine.analyse(board, chess.engine.Limit(depth=self.depth))
+        use_depth = depth if depth is not None else self.depth
+        result = self.engine.analyse(board, chess.engine.Limit(depth=use_depth))
         pov = result["score"].white()  # 白方视角的 Cp 或 Mate 对象
 
         if pov.is_mate():

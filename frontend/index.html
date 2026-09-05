@@ -3,83 +3,176 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ChessMind ♟️ 国际象棋多 Agent 分析</title>
+<title>ChessCouncil · 多智能体辩论棋评</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=clubui2">
 </head>
 <body>
-<div class="container">
-  <header>
-    <h1>♟️ ChessMind</h1>
-    <span class="subtitle">多 Agent 国际象棋分析系统</span>
-  </header>
-
-  <div class="main">
-    <!-- 左侧棋盘 -->
-    <div class="board-section">
-      <div id="board"></div>
-      <div class="board-controls">
-        <button id="btn-new-game">新对局</button>
-        <button id="btn-flip">翻转棋盘</button>
-        <span id="game-status">白方先行</span>
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div>
+        <h1>ChessCouncil</h1>
+        <p class="tagline">异质分析 · 分歧辩论 · 引擎仲裁</p>
       </div>
     </div>
+    <div class="topbar-meta">
+      <span id="llm-status" class="pill">模型：检测中…</span>
+      <span id="game-status" class="pill pill-soft">白方先行</span>
+    </div>
+  </header>
 
-    <!-- 右侧分析面板 -->
-    <div class="analysis-section">
-      <!-- 胜率条 -->
-      <div class="eval-bar-container">
+  <div class="toolbar">
+    <label class="field">
+      <span>模式</span>
+      <select id="game-mode">
+        <option value="human_vs_human">人人分析</option>
+        <option value="human_vs_ai">人 vs AI</option>
+        <option value="ai_vs_ai" selected>AI vs AI</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>人类执</span>
+      <select id="human-color">
+        <option value="white">白</option>
+        <option value="black">黑</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>白方 AI</span>
+      <select id="white-ai">
+        <option value="llm">LLM</option>
+        <option value="engine">Stockfish</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>深度</span>
+      <select id="engine-depth">
+        <option value="8">8</option>
+        <option value="12" selected>12</option>
+        <option value="15">15</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>教练</span>
+      <select id="coach-level">
+        <option value="beginner">入门</option>
+        <option value="intermediate" selected>中级</option>
+        <option value="advanced">高级</option>
+      </select>
+    </label>
+    <label class="field check">
+      <input type="checkbox" id="with-analysis" checked>
+      <span>Council</span>
+    </label>
+  </div>
+
+  <div class="stage">
+    <section class="board-panel">
+      <div class="board-frame">
+        <div id="board"></div>
+      </div>
+      <div class="board-controls">
+        <button id="btn-new-game" type="button">新对局</button>
+        <button id="btn-flip" type="button">翻转</button>
+        <button id="btn-ai-step" class="accent" type="button">AI 一步</button>
+        <button id="btn-auto" class="accent" type="button">自动对战</button>
+        <button id="btn-pause" type="button" disabled>暂停</button>
+        <button id="btn-review" type="button">复盘</button>
+      </div>
+      <p id="ai-meta" class="ai-meta">等待开局…</p>
+    </section>
+
+    <aside class="council-panel">
+      <div class="eval-row">
         <div class="eval-bar">
           <div class="eval-white" id="eval-white" style="height:50%"></div>
           <div class="eval-black" id="eval-black" style="height:50%"></div>
         </div>
-        <div class="eval-text">
-          <span id="white-prob">50%</span>
-          <span id="black-prob">50%</span>
+        <div class="eval-copy">
+          <div id="move-class" class="move-class">等待对局开始…</div>
+          <div class="eval-text">
+            <span id="white-prob">白方 50%</span>
+            <span id="black-prob">黑方 50%</span>
+          </div>
         </div>
       </div>
 
-      <!-- 走子分类 -->
-      <div id="move-class" class="move-class">等待对局开始…</div>
-
-      <!-- 标签切换 -->
-      <div class="tabs">
-        <button class="tab active" data-tab="summary">综述</button>
-        <button class="tab" data-tab="tactical">战术</button>
-        <button class="tab" data-tab="strategic">战略</button>
-        <button class="tab" data-tab="pattern">开局</button>
+      <div id="disagreement-panel" class="disagreement-panel">
+        <div class="dg-head">
+          <span class="dg-title">AI 争议度</span>
+          <span id="dg-label" class="dg-label">等待分析…</span>
+        </div>
+        <div class="dg-bar"><div id="dg-fill" class="dg-fill" style="width:0%"></div></div>
+        <div id="dg-moves" class="dg-moves"></div>
       </div>
 
-      <!-- 分析内容 -->
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="summary" type="button">教练</button>
+        <button class="tab" data-tab="tactical" type="button">战术</button>
+        <button class="tab" data-tab="strategic" type="button">战略</button>
+        <button class="tab" data-tab="risk" type="button">风险</button>
+        <button class="tab" data-tab="debate" type="button">辩论</button>
+      </div>
+
       <div class="tab-content active" id="tab-summary">
-        <p class="placeholder">走一步棋来看看多 Agent 怎么说～</p>
+        <p class="placeholder">走棋后，教练会把 Council 结论翻译成你的水平语言。</p>
       </div>
       <div class="tab-content" id="tab-tactical">
-        <p class="placeholder">战术分析将在这里显示</p>
+        <p class="placeholder">战术分析师意见</p>
       </div>
       <div class="tab-content" id="tab-strategic">
-        <p class="placeholder">战略分析将在这里显示</p>
+        <p class="placeholder">战略分析师意见</p>
       </div>
-      <div class="tab-content" id="tab-pattern">
-        <p class="placeholder">开局分析将在这里显示</p>
+      <div class="tab-content" id="tab-risk">
+        <p class="placeholder">风险审查员意见</p>
       </div>
-    </div>
+      <div class="tab-content" id="tab-debate">
+        <p class="placeholder">高争议时自动触发质询与仲裁</p>
+      </div>
+    </aside>
   </div>
 
-  <!-- PGN 导入 -->
-  <div class="pgn-section">
-    <details>
-      <summary>📋 PGN 导入分析</summary>
-      <textarea id="pgn-input" placeholder="在这里粘贴 PGN 文本…"></textarea>
-      <button id="btn-analyze-pgn">分析 PGN</button>
+  <section class="tools">
+    <details class="tool-block" open>
+      <summary>路演 Demo</summary>
+      <p class="tool-hint">一键加载高争议局面并跑 Council</p>
+      <div id="demo-buttons" class="demo-buttons"></div>
+    </details>
+
+    <details class="tool-block">
+      <summary>多模态识谱</summary>
+      <div class="vision-row">
+        <label class="vision-label">
+          <input type="file" id="vision-file" accept="image/*">
+        </label>
+        <button id="btn-vision" type="button">识别并加载</button>
+        <button id="btn-analyze-pos" type="button">分析当前局面</button>
+        <span id="vision-status" class="vision-status"></span>
+      </div>
+    </details>
+
+    <details class="tool-block">
+      <summary>PGN 导入</summary>
+      <textarea id="pgn-input" placeholder="粘贴 PGN…"></textarea>
+      <button id="btn-analyze-pgn" type="button">分析 PGN</button>
       <div id="pgn-result"></div>
     </details>
-  </div>
+
+    <details class="tool-block" id="review-section" style="display:none" open>
+      <summary>赛后复盘</summary>
+      <div id="review-result"></div>
+    </details>
+  </section>
 </div>
 
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=clubui1"></script>
 </body>
 </html>

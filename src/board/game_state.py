@@ -117,3 +117,9 @@ class GameState:
         self.move_count = 0
         self.result = None
         self.result_pgn = "*"
+
+    def load_fen(self, fen: str) -> None:
+        """从 FEN 加载为新的初始局面并重置历史。"""
+        board = chess.Board(fen)
+        self.initial = board.copy()
+        self.reset()
