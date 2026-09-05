@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=finale1">
+<link rel="stylesheet" href="style.css?v=online1">
 </head>
 <body>
 <div class="app-shell">
@@ -40,6 +40,21 @@
     <div id="council-progress" class="council-progress" hidden>
       <span class="spinner" aria-hidden="true"></span>
       <span id="council-progress-text">Council 分析中…</span>
+    </div>
+  </div>
+
+  <div class="online-bar" id="online-bar">
+    <div class="online-copy">
+      <strong>联机对弈</strong>
+      <span id="online-status">本地模式 · 可开房间用手机互下</span>
+    </div>
+    <div class="online-controls">
+      <input id="online-name" class="online-input" type="text" maxlength="24" placeholder="昵称" value="玩家">
+      <button id="btn-room-create" class="accent" type="button">创建房间</button>
+      <input id="online-room-code" class="online-input code" type="text" maxlength="8" placeholder="房间码" autocomplete="off">
+      <button id="btn-room-join" type="button">加入</button>
+      <button id="btn-room-copy" type="button" hidden>复制链接</button>
+      <button id="btn-room-leave" type="button" hidden>退出联机</button>
     </div>
   </div>
 
@@ -271,6 +286,6 @@
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=finale1"></script>
+<script src="app.js?v=online1"></script>
 </body>
 </html>

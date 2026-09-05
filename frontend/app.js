@@ -25,6 +25,17 @@ let editBoard = null; // Chess instance while editing
 let autoDelayMs = STEP_DELAY_MS;
 let progressTimer = null;
 
+/** 联机房间 */
+let online = {
+  active: false,
+  roomId: null,
+  token: null,
+  color: null,
+  name: '',
+  ws: null,
+  reconnectTimer: null,
+};
+
 const PIECE_GLYPH = {
   K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '♙',
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
@@ -70,6 +81,11 @@ function initBoard() {
 
 function humanMayMove() {
   if (busy || serverState.is_game_over) return false;
+  if (online.active) {
+    if (!online.color) return false;
+    const my = online.color === 'white' ? 'w' : 'b';
+    return game.turn() === my;
+  }
   if (serverState.mode === 'ai_vs_ai') return false;
   if (serverState.mode === 'human_vs_human') return true;
   // human_vs_ai：仅人类回合
@@ -122,6 +138,26 @@ function handleSquareClick(square) {
 async function submitHumanMove(uci) {
   busy = true;
   try {
+    if (online.active) {
+      if (online.ws && online.ws.readyState === WebSocket.OPEN) {
+        online.ws.send(JSON.stringify({ type: 'move', uci }));
+      } else {
+        const r = await fetch(`${API}/rooms/${online.roomId}/move`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: online.token, uci }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          alert(data.detail || '走子失败');
+          await syncOnlineState();
+          return;
+        }
+        applyOnlineMovePayload(data);
+      }
+      return;
+    }
+
     const r = await fetch(`${API}/game/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -523,6 +559,12 @@ function updateStatus() {
     return;
   }
   const turn = game.turn() === 'w' ? '白方' : '黑方';
+  if (online.active) {
+    const mine = online.color === 'white' ? '白' : online.color === 'black' ? '黑' : '?';
+    const myTurn = humanMayMove();
+    $('#game-status').text(`${turn}走棋 · 你执${mine}${myTurn ? ' · 轮到你' : ' · 等待对手'}`);
+    return;
+  }
   const ctrl = serverState.controller;
   const ctrlLabel = ctrl === 'llm' ? 'LLM' : ctrl === 'engine' ? 'Stockfish' : ctrl === 'human' ? '人类' : '';
   $('#game-status').text(ctrlLabel ? `${turn}走棋（${ctrlLabel}）` : `${turn}走棋`);
@@ -566,6 +608,19 @@ function resetPanels() {
 async function startNewGame() {
   stopAuto();
   hideFinale();
+  if (online.active) {
+    if (online.ws && online.ws.readyState === WebSocket.OPEN) {
+      online.ws.send(JSON.stringify({ type: 'reset' }));
+    } else {
+      await fetch(`${API}/rooms/${online.roomId}/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: online.token }),
+      });
+      await syncOnlineState();
+    }
+    return;
+  }
   busy = true;
   try {
     const r = await fetch(`${API}/game/new`, {
@@ -1213,12 +1268,269 @@ $('#btn-analyze-pgn').click(async () => {
   }
 });
 
+function roomShareUrl(roomId) {
+  const u = new URL(window.location.href);
+  u.searchParams.set('room', roomId);
+  return u.toString();
+}
+
+function saveOnlineSession() {
+  if (!online.roomId || !online.token) return;
+  localStorage.setItem(
+    `chesscouncil_room_${online.roomId}`,
+    JSON.stringify({ token: online.token, color: online.color, name: online.name })
+  );
+}
+
+function loadOnlineSession(roomId) {
+  try {
+    return JSON.parse(localStorage.getItem(`chesscouncil_room_${roomId}`) || 'null');
+  } catch (_) {
+    return null;
+  }
+}
+
+function updateOnlineChrome() {
+  const bar = $('#online-bar');
+  if (!online.active) {
+    bar.removeClass('is-online');
+    $('#online-status').text('本地模式 · 可开房间用手机互下');
+    $('#btn-room-copy, #btn-room-leave').prop('hidden', true);
+    $('#btn-room-create, #btn-room-join').prop('disabled', false);
+    return;
+  }
+  bar.addClass('is-online');
+  const colorLabel = online.color === 'white' ? '白' : '黑';
+  $('#online-status').text(`房间 ${online.roomId} · 你执${colorLabel} · 已连接`);
+  $('#online-room-code').val(online.roomId);
+  $('#btn-room-copy, #btn-room-leave').prop('hidden', false);
+}
+
+function applyOnlineBoardState(state) {
+  if (!state) return;
+  serverState.mode = 'human_vs_human';
+  serverState.controller = 'human';
+  serverState.is_game_over = !!state.is_game_over;
+  serverState.human_color = online.color || 'white';
+  try {
+    game.load(state.fen);
+  } catch (_) {
+    game.reset();
+  }
+  board.position(state.fen, false);
+  orientation = online.color === 'black' ? 'black' : 'white';
+  board.orientation(orientation);
+  selectedSquare = null;
+  clearHighlights();
+  updateStatus();
+  const seats = state.seats || {};
+  const w = seats.white ? `${seats.white.name}${seats.white.connected ? '' : '(离线)'}` : '空位';
+  const b = seats.black ? `${seats.black.name}${seats.black.connected ? '' : '(离线)'}` : '空位';
+  $('#ai-meta').text(`联机 ${online.roomId} · 白:${w} · 黑:${b}`);
+  if (state.is_game_over && state.result) {
+    // 等 move 包带 finale；纯 state 时用客户端兜底
+  }
+}
+
+function applyOnlineMovePayload(data) {
+  const state = data.state || {};
+  applyOnlineBoardState(state);
+  const mv = data.move;
+  if (mv && mv.uci && mv.uci.length >= 4) {
+    markLastMove(mv.uci.slice(0, 2), mv.uci.slice(2, 4));
+  }
+  busy = false;
+  if (state.is_game_over) {
+    showFinale(data.finale || inferFinaleClient({ game_over: true, result: state.result }));
+  }
+}
+
+async function syncOnlineState() {
+  if (!online.roomId) return;
+  const state = await fetch(`${API}/rooms/${online.roomId}`).then((r) => r.json());
+  applyOnlineBoardState(state);
+}
+
+function disconnectOnlineWs() {
+  if (online.reconnectTimer) {
+    clearTimeout(online.reconnectTimer);
+    online.reconnectTimer = null;
+  }
+  if (online.ws) {
+    try {
+      online.ws.close();
+    } catch (_) {}
+    online.ws = null;
+  }
+}
+
+function connectOnlineWs() {
+  disconnectOnlineWs();
+  if (!online.roomId || !online.token) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(
+    `${proto}://${location.host}/api/rooms/${online.roomId}/ws?token=${encodeURIComponent(online.token)}`
+  );
+  online.ws = ws;
+  ws.onopen = () => {
+    updateOnlineChrome();
+    $('#online-status').text(`房间 ${online.roomId} · 实时已连接`);
+  };
+  ws.onmessage = (ev) => {
+    let msg;
+    try {
+      msg = JSON.parse(ev.data);
+    } catch (_) {
+      return;
+    }
+    if (msg.type === 'hello' || msg.type === 'state' || msg.type === 'peer') {
+      applyOnlineBoardState(msg.state);
+      return;
+    }
+    if (msg.type === 'move') {
+      applyOnlineMovePayload(msg);
+      return;
+    }
+    if (msg.type === 'reset') {
+      hideFinale();
+      clearLastMoveMarkers();
+      applyOnlineBoardState(msg.state);
+      return;
+    }
+    if (msg.type === 'error') {
+      busy = false;
+      $('#ai-meta').text(msg.message || '联机错误');
+      syncOnlineState();
+    }
+  };
+  ws.onclose = () => {
+    if (!online.active) return;
+    $('#online-status').text(`房间 ${online.roomId} · 连接断开，重连中…`);
+    online.reconnectTimer = setTimeout(connectOnlineWs, 1200);
+  };
+}
+
+async function enterOnlineRoom(session) {
+  stopAuto();
+  hideFinale();
+  online.active = true;
+  online.roomId = session.room_id;
+  online.token = session.token;
+  online.color = session.color;
+  online.name = session.name || $('#online-name').val() || '玩家';
+  saveOnlineSession();
+  $('#game-mode').val('human_vs_human');
+  refreshModeControls();
+  applyOnlineBoardState(session.state);
+  updateOnlineChrome();
+  connectOnlineWs();
+  // 更新地址栏方便分享
+  const u = new URL(window.location.href);
+  u.searchParams.set('room', online.roomId);
+  history.replaceState(null, '', u.toString());
+}
+
+function leaveOnlineRoom() {
+  online.active = false;
+  disconnectOnlineWs();
+  online.roomId = null;
+  online.token = null;
+  online.color = null;
+  updateOnlineChrome();
+  const u = new URL(window.location.href);
+  u.searchParams.delete('room');
+  history.replaceState(null, '', u.toString());
+  startNewGame();
+}
+
+async function joinRoomByCode(code, name) {
+  code = (code || '').trim().toUpperCase();
+  name = (name || $('#online-name').val() || '玩家').trim();
+  if (!code) {
+    alert('请输入房间码');
+    return false;
+  }
+  const cached = loadOnlineSession(code);
+  if (cached && cached.token) {
+    try {
+      const state = await fetch(`${API}/rooms/${code}`).then((r) => {
+        if (!r.ok) throw new Error('gone');
+        return r.json();
+      });
+      await enterOnlineRoom({
+        room_id: code,
+        token: cached.token,
+        color: cached.color,
+        name: cached.name || name,
+        state,
+      });
+      return true;
+    } catch (_) {
+      /* fallthrough */
+    }
+  }
+  const r = await fetch(`${API}/rooms/${code}/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  const data = await r.json();
+  if (!r.ok) {
+    alert(typeof data.detail === 'string' ? data.detail : '加入失败');
+    return false;
+  }
+  await enterOnlineRoom(data);
+  return true;
+}
+
+$('#btn-room-create').click(async () => {
+  const name = ($('#online-name').val() || '玩家').trim();
+  const r = await fetch(`${API}/rooms`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, color: 'white' }),
+  });
+  const data = await r.json();
+  if (!r.ok) {
+    alert(data.detail || '创建失败');
+    return;
+  }
+  await enterOnlineRoom(data);
+  alert(`房间 ${data.room_id} 已创建。点「复制链接」发给对手。`);
+});
+
+$('#btn-room-join').click(async () => {
+  await joinRoomByCode($('#online-room-code').val());
+});
+
+$('#btn-room-copy').click(async () => {
+  if (!online.roomId) return;
+  const link = roomShareUrl(online.roomId);
+  try {
+    await navigator.clipboard.writeText(link);
+    $('#ai-meta').text('房间链接已复制');
+  } catch (_) {
+    prompt('复制房间链接', link);
+  }
+});
+
+$('#btn-room-leave').click(() => leaveOnlineRoom());
+
 $(document).ready(async () => {
   initBoard();
   $(window).on('resize', () => {
     if (lastMoveFrom && lastMoveTo) paintLastMoveMarkers();
   });
-  await startNewGame();
+
+  const roomParam = new URLSearchParams(location.search).get('room');
+  if (roomParam) {
+    $('#online-room-code').val(roomParam.toUpperCase());
+    const ok = await joinRoomByCode(roomParam);
+    if (!ok) await startNewGame();
+  } else {
+    await startNewGame();
+  }
+
   await loadDemos();
   refreshHistory();
   try {

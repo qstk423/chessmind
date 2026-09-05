@@ -3,8 +3,10 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from src.api.online import router as rooms_router
 from src.api.routes import orchestrator, router
 from src.storage import init_db
 
@@ -24,10 +26,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# API 路由
-app.include_router(router, prefix="/api")
+# 联机部署：默认同源；若前后端分离可设 CORS_ORIGINS=* 或逗号列表
+_cors = os.getenv("CORS_ORIGINS", "*").strip()
+_origins = ["*"] if _cors == "*" else [o.strip() for o in _cors.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# 前端静态文件
+app.include_router(router, prefix="/api")
+app.include_router(rooms_router, prefix="/api")
+
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.exists(frontend_path):
     app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
@@ -36,7 +48,8 @@ if os.path.exists(frontend_path):
 def main():
     import uvicorn
 
-    host = os.getenv("HOST", "127.0.0.1")
+    # 联机默认监听全网卡；本机调试可 HOST=127.0.0.1
+    host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("src.main:app", host=host, port=port)
 

@@ -16,8 +16,10 @@
 - **赛后复盘**：争议步、辩论次数、叙事与 PGN
 - **多模态识谱**：棋盘截图 → FEN，支持格子纠错后再分析
 - **对局历史**：SQLite 持久化，可恢复局面
+- **联机对弈**：创建房间码 / 分享链接，两人手机实时互下（WebSocket）
 - **路演快捷栏**：一键希腊赠礼 / 快速 AI 对战 / 调用证明
 - **离线前端资源**：jQuery / chessboard / 棋子图本地 vendor，弱网可演示
+- **终局结算动画**：双车错 / 底线杀 / 闷杀等杀型 CSS 结算
 - **调用日志**：`logs/llm_calls.jsonl`，便于大赛提交调用证明
 - **无 Key / 无引擎降级**：仍可打开 UI；LLM 与 Stockfish 缺失时软降级
 - **Docker**：`docker compose up` 一键部署（镜像内含 Stockfish）
@@ -60,7 +62,9 @@ cp .env.example .env        # 填入 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
 python -m src.main
 ```
 
-打开 http://127.0.0.1:8000
+打开 http://127.0.0.1:8000  
+
+**局域网联机（两部手机）：** 电脑执行 `HOST=0.0.0.0 python -m src.main`，手机访问 `http://<电脑局域网IP>:8000`，点「创建房间」→「复制链接」发给对方。
 
 ### Docker 一键部署
 
@@ -109,6 +113,9 @@ LLM_MODEL=glm-5.1
 | `GET /api/games` | 对局历史列表 |
 | `POST /api/games/{id}/restore` | 恢复历史局面 |
 | `POST /api/fen/set-square` | FEN 纠错：改格子 |
+| `POST /api/rooms` | 创建联机房间 |
+| `POST /api/rooms/{id}/join` | 加入房间 |
+| `WS /api/rooms/{id}/ws?token=` | 实时同步走子 |
 | `GET /api/health?ping_llm=true` | 健康检查 |
 | `GET /api/logs/recent` | 最近 LLM 调用日志 |
 
