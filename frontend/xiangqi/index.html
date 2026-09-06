@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#2a1410">
+  <title>对弈 · ChessCouncil · 中国象棋</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="/shared/variant-switch.css">
+</head>
+<body class="page-play" data-page="play">
+<div class="app-shell">
+  <header class="topbar topbar-compact">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">象</div>
+      <h1>ChessCouncil</h1>
+    </div>
+    <nav class="variant-switch" aria-label="棋种">
+      <a href="/chess/" data-variant-link="chess">国际象棋</a>
+      <a href="/xiangqi/" data-variant-link="xiangqi">中国象棋</a>
+    </nav>
+    <div class="topbar-meta">
+      <span id="service-status" class="pill pill-soft">连接中…</span>
+      <span id="turn-badge" class="pill">红方行棋</span>
+    </div>
+  </header>
+
+  <div class="stage stage-mobile">
+    <section class="board-panel">
+      <div class="setup-bar" aria-label="对局设置">
+        <label class="field">
+          <span>模式</span>
+          <select id="game-mode">
+            <option value="human_vs_human">人人</option>
+            <option value="human_vs_ai">人 vs AI</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>执棋</span>
+          <select id="human-color">
+            <option value="red">红</option>
+            <option value="black">黑</option>
+          </select>
+        </label>
+        <label class="field check">
+          <input type="checkbox" id="with-analysis" checked>
+          <span>Council</span>
+        </label>
+        <button class="accent setup-new" id="new-game" type="button">新对局</button>
+      </div>
+
+      <div class="online-bar" id="online-bar" hidden>
+        <div class="online-copy">
+          <strong>联机</strong>
+          <span id="online-bar-status">联机中</span>
+        </div>
+        <div class="online-controls">
+          <button type="button" id="btn-room-reset">重置棋局</button>
+          <button type="button" id="btn-room-leave">退出联机</button>
+        </div>
+      </div>
+
+      <div class="player-row top">
+        <span class="avatar black">将</span>
+        <div><strong id="top-name">黑方</strong><small id="top-state">等待</small></div>
+        <span class="check-badge" id="check-badge" hidden>将军</span>
+      </div>
+
+      <div class="board-frame">
+        <canvas id="xiangqi-board" width="810" height="900" aria-label="中国象棋棋盘"></canvas>
+      </div>
+
+      <div class="player-row">
+        <span class="avatar red">帅</span>
+        <div><strong id="bottom-name">红方</strong><small id="bottom-state">轮到你走</small></div>
+      </div>
+
+      <div class="board-controls">
+        <div class="board-controls-main">
+          <button id="undo" type="button">悔棋</button>
+          <button id="hint" type="button">提示</button>
+          <button id="ai-step" class="accent" type="button">AI 一步</button>
+          <button id="flip" type="button">翻转</button>
+        </div>
+      </div>
+
+      <div class="script-bar" id="script-bar" hidden>
+        <span id="script-label">棋谱演示</span>
+        <button class="accent" id="btn-script-step" type="button">下一步</button>
+      </div>
+      <p class="result-banner" id="result-banner" hidden></p>
+      <p class="ai-meta">走棋后下滑查看 Council</p>
+      <div class="move-head"><span>着法</span><span id="move-count">0 着</span></div>
+      <ol id="move-list"><li class="placeholder">尚无着法</li></ol>
+    </section>
+
+    <aside class="council-panel">
+      <div class="council-head">
+        <div>
+          <p class="eyebrow">COUNCIL</p>
+          <h2>象棋理事会</h2>
+        </div>
+        <span class="status-dot" id="council-status">待命</span>
+      </div>
+
+      <div class="eval-row">
+        <div class="eval-bar" aria-hidden="true">
+          <div class="eval-red" id="eval-red" style="height:50%"></div>
+          <div class="eval-black-bar" id="eval-black" style="height:50%"></div>
+        </div>
+        <div class="eval-copy">
+          <div id="move-class" class="move-class">点击「分析局面」</div>
+          <div class="eval-text">
+            <span id="red-prob">红 50%</span>
+            <span id="black-prob">黑 50%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="disagreement-panel">
+        <div class="dg-head">
+          <span class="dg-title">三位分析师</span>
+          <span id="dg-label" class="dg-label">待命</span>
+        </div>
+        <div class="dg-bar"><div id="dg-fill" class="dg-fill" style="width:0%"></div></div>
+        <div id="dg-compare" class="dg-compare">
+          <button class="dg-card" type="button" data-role="tactical" data-tab="tactical">
+            <span class="dg-role">攻杀</span>
+            <span class="dg-move" id="dg-move-tactical">—</span>
+            <span class="dg-state" id="dg-state-tactical">待命</span>
+          </button>
+          <button class="dg-card" type="button" data-role="strategic" data-tab="strategic">
+            <span class="dg-role">局势</span>
+            <span class="dg-move" id="dg-move-strategic">—</span>
+            <span class="dg-state" id="dg-state-strategic">待命</span>
+          </button>
+          <button class="dg-card" type="button" data-role="risk" data-tab="risk">
+            <span class="dg-role">风险</span>
+            <span class="dg-move" id="dg-move-risk">—</span>
+            <span class="dg-state" id="dg-state-risk">待命</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="summary" type="button">教练</button>
+        <button class="tab" data-tab="tactical" type="button">攻杀</button>
+        <button class="tab" data-tab="strategic" type="button">局势</button>
+        <button class="tab" data-tab="risk" type="button">风险</button>
+        <button class="tab" data-tab="debate" type="button">辩论</button>
+      </div>
+      <div class="tab-content active" id="tab-summary"><p class="placeholder">点「分析局面」查看本步要点</p></div>
+      <div class="tab-content" id="tab-tactical" hidden><p class="placeholder">攻杀</p></div>
+      <div class="tab-content" id="tab-strategic" hidden><p class="placeholder">局势</p></div>
+      <div class="tab-content" id="tab-risk" hidden><p class="placeholder">风险</p></div>
+      <div class="tab-content" id="tab-debate" hidden><p class="placeholder">辩论</p></div>
+
+      <div class="council-footer">
+        <button class="accent" id="btn-analyze" type="button">分析局面</button>
+        <button id="btn-play-verdict" type="button" disabled>走出推荐</button>
+      </div>
+      <p class="council-hint" id="council-note">评估条 · 三师推荐 · 标签页 · 争议辩论（启发式）。</p>
+    </aside>
+  </div>
+</div>
+
+<nav class="app-tabbar" aria-label="主导航">
+  <a class="tabbar-item is-active" href="index.html" aria-current="page">对弈</a>
+  <a class="tabbar-item" href="learn.html">学习</a>
+  <a class="tabbar-item" href="online.html">联机</a>
+  <a class="tabbar-item" href="tools.html">工具</a>
+</nav>
+
+<script src="/shared/variant-switch.js"></script>
+<script src="app.js?v=12"></script>
+</body>
+</html>

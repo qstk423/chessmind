@@ -9,22 +9,27 @@
 <title>学习 · ChessCouncil</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<link rel="stylesheet" href="style.css?v=mapp5">
+<link rel="stylesheet" href="style.css?v=mapp8">
+<link rel="stylesheet" href="/shared/variant-switch.css">
 </head>
 <body class="page-learn" data-page="learn">
 <div class="app-shell page-shell">
   <header class="topbar topbar-compact">
     <div class="brand"><div class="brand-mark" aria-hidden="true"></div><h1>学习</h1></div>
+    <nav class="variant-switch" aria-label="棋种">
+      <a href="/chess/learn.html" data-variant-link="chess">国际象棋</a>
+      <a href="/xiangqi/learn.html" data-variant-link="xiangqi">中国象棋</a>
+    </nav>
   </header>
   <p id="ops-banner" class="ops-banner" hidden></p>
   <div id="toast-host" class="toast-host" aria-live="polite"></div>
 
-  <div class="learn-mode-tabs" role="tablist">
-    <button type="button" class="learn-mode-tab active" data-learn="library">名局图库</button>
-    <button type="button" class="learn-mode-tab" data-learn="challenge">残局闯关</button>
+  <div class="learn-mode-tabs" role="tablist" aria-label="学习模式">
+    <button type="button" class="learn-mode-tab active" role="tab" id="tab-library" data-learn="library" aria-selected="true" aria-controls="learn-library">名局图库</button>
+    <button type="button" class="learn-mode-tab" role="tab" id="tab-challenge" data-learn="challenge" aria-selected="false" aria-controls="learn-challenge" tabindex="-1">残局闯关</button>
   </div>
 
-  <div id="learn-library">
+  <div id="learn-library" role="tabpanel" aria-labelledby="tab-library">
     <div class="lib-filters">
       <button type="button" class="lib-filter active" data-cat="">全部</button>
       <button type="button" class="lib-filter" data-cat="game">名局</button>
@@ -36,7 +41,7 @@
     <div id="library-list" class="library-list"></div>
   </div>
 
-  <div id="learn-challenge" hidden>
+  <div id="learn-challenge" role="tabpanel" aria-labelledby="tab-challenge" hidden>
     <p class="tool-hint">通关解锁下一关；点开始后进入对弈页。</p>
     <p id="challenge-hud" class="challenge-hud" hidden></p>
     <div id="challenge-list" class="challenge-list"></div>
@@ -53,6 +58,7 @@
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=mapp7"></script>
+<script src="/shared/variant-switch.js"></script>
+<script src="app.js?v=mapp13"></script>
 </body>
 </html>

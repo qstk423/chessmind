@@ -31,8 +31,8 @@ from src.council.demos import get_demo, list_demos
 from src.council.disagreement import compute_disagreement
 from src.council.review import build_review
 from src.library.catalog import get_library_item, list_library
-from src.storage import upsert_game
 from src.llm_logger import new_game_id, set_context
+from src.storage import upsert_game
 
 GameMode = Literal["human_vs_human", "human_vs_ai", "ai_vs_ai"]
 AnalysisMode = Literal["fast", "deep"]
@@ -852,6 +852,7 @@ class ChessMindOrchestrator:
     def get_state(self) -> dict:
         return {
             "fen": self.game.fen,
+            "fen_start": self.fen_start,
             "move_count": self.game.move_count,
             "is_game_over": self.game.is_game_over,
             "result": self.game.result,

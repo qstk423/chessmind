@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#2a1410">
+  <title>工具 · ChessCouncil · 中国象棋</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="/shared/variant-switch.css">
+</head>
+<body class="page-tools" data-page="tools">
+<div class="app-shell page-shell">
+  <header class="topbar topbar-compact">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">象</div>
+      <h1>工具</h1>
+    </div>
+    <nav class="variant-switch" aria-label="棋种">
+      <a href="/chess/tools.html" data-variant-link="chess">国际象棋</a>
+      <a href="/xiangqi/tools.html" data-variant-link="xiangqi">中国象棋</a>
+    </nav>
+    <span id="service-status" class="pill">工具</span>
+  </header>
+
+  <div class="tools-grid">
+    <details class="tool-block" open>
+      <summary>局面 FEN</summary>
+      <p class="tool-hint">导入 / 导出 FEN，带回对弈页继续下。</p>
+      <label class="fen-label">FEN
+        <textarea id="fen-box" rows="4" placeholder="粘贴象棋 FEN…"></textarea>
+      </label>
+      <div class="board-controls-main" style="margin-top:12px">
+        <button id="btn-export-fen" type="button">导出当前</button>
+        <button id="btn-load-fen" class="accent" type="button">加载 FEN</button>
+        <button id="btn-goto-board" type="button">回对弈页</button>
+      </div>
+    </details>
+  </div>
+</div>
+
+<nav class="app-tabbar" aria-label="主导航">
+  <a class="tabbar-item" href="index.html">对弈</a>
+  <a class="tabbar-item" href="learn.html">学习</a>
+  <a class="tabbar-item" href="online.html">联机</a>
+  <a class="tabbar-item is-active" href="tools.html" aria-current="page">工具</a>
+</nav>
+
+<script src="/shared/variant-switch.js"></script>
+<script src="app.js?v=12"></script>
+</body>
+</html>

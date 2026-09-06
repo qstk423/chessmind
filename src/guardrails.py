@@ -13,22 +13,48 @@ from src.config import (
     RATE_LIMIT_BURST,
     RATE_LIMIT_WINDOW_SEC,
 )
-
+from src.visitor import verify_owner_id
 
 _lock = Lock()
 _hits: dict[str, deque[float]] = defaultdict(deque)
 
-# 贵 / 写路径：更严格一点
+# 真正昂贵的分析路径：严格限流（相对 /api 规范路径）。
 _EXPENSIVE_PREFIXES = (
-    "/api/game/move",
-    "/api/game/ai-step",
     "/api/game/analyze-position",
     "/api/game/post-review",
     "/api/demos/",
     "/api/vision/",
     "/api/analyze/pgn",
-    "/api/library/step",
 )
+
+# 走棋 / 自动播放路径需要支持“极快”档；仍保留会话级上限。
+_PLAYBACK_PATHS = {
+    "/api/game/move",
+    "/api/game/ai-step",
+    "/api/library/step",
+}
+
+
+def _canonical_api_path(path: str) -> str:
+    """把 /api/chess/*、/api/xiangqi/* 归一成 /api/*，便于共用限流规则。"""
+    for prefix in ("/api/chess/", "/api/xiangqi/"):
+        if path.startswith(prefix):
+            return "/api/" + path[len(prefix) :]
+    return path
+
+
+def _bucket(path: str) -> str:
+    """按真实功能分桶，避免所有 /api/game/* 互相挤占额度。"""
+    canon = _canonical_api_path(path)
+    if canon.startswith("/api/rooms/"):
+        if canon.endswith("/move"):
+            return "rooms:move"
+        if canon.endswith("/reset"):
+            return "rooms:reset"
+        if canon.endswith("/join"):
+            return "rooms:join"
+        return "rooms:state"
+    return canon
 
 
 def client_ip(request: Request) -> str:
@@ -45,18 +71,27 @@ def check_rate_limit(request: Request) -> None:
     path = request.url.path
     if not path.startswith("/api/"):
         return
-    if path == "/api/health" and request.query_params.get("ping_llm") not in ("1", "true", "True"):
+    canon = _canonical_api_path(path)
+    if canon == "/api/health" and request.query_params.get("ping_llm") not in ("1", "true", "True"):
         return
 
     ip = client_ip(request)
     now = time.monotonic()
     window = max(1, RATE_LIMIT_WINDOW_SEC)
     base = max(1, RATE_LIMIT_BURST)
-    limit = max(1, base // 3) if any(path.startswith(p) for p in _EXPENSIVE_PREFIXES) else base
-    if path == "/api/health" and request.query_params.get("ping_llm") in ("1", "true", "True"):
+    if canon in _PLAYBACK_PATHS or (canon.startswith("/api/rooms/") and canon.endswith("/move")):
+        limit = base * 4
+    elif any(canon.startswith(p) for p in _EXPENSIVE_PREFIXES):
+        limit = max(1, base // 3)
+    else:
+        limit = base
+    if canon == "/api/health" and request.query_params.get("ping_llm") in ("1", "true", "True"):
         limit = max(1, base // 5)
 
-    key = f"{ip}:{path.split('/')[2] if path.count('/') >= 2 else path}"
+    session = (request.headers.get("x-session-id") or "").strip()[:128] or "anonymous"
+    # 棋种写入 key，避免 chess / xiangqi 共用同一桶。
+    variant = "xq" if path.startswith("/api/xiangqi") else ("ch" if path.startswith("/api/chess") else "api")
+    key = f"{ip}:{session}:{variant}:{_bucket(path)}"
     with _lock:
         q = _hits[key]
         while q and now - q[0] > window:
@@ -106,11 +141,9 @@ def is_admin(request: Request) -> bool:
 
 
 def require_owner_id(request: Request) -> str:
-    """浏览器本地身份：历史读写必须带 X-Owner-Id。"""
+    """浏览器本地身份：历史读写必须带有效 X-Owner-Id。"""
     owner = (request.headers.get("x-owner-id") or "").strip()
-    if len(owner) < 8 or len(owner) > 128:
-        raise HTTPException(
-            status_code=401,
-            detail="需要有效的 X-Owner-Id（本机身份，至少 8 字符）",
-        )
-    return owner
+    try:
+        return verify_owner_id(owner)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e

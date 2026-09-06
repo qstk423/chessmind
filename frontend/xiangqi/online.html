@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#2a1410">
+  <title>联机 · ChessCouncil · 中国象棋</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="/shared/variant-switch.css">
+</head>
+<body class="page-online" data-page="online">
+<div class="app-shell page-shell">
+  <header class="topbar topbar-compact">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">象</div>
+      <h1>联机</h1>
+    </div>
+    <nav class="variant-switch" aria-label="棋种">
+      <a href="/chess/online.html" data-variant-link="chess">国际象棋</a>
+      <a href="/xiangqi/online.html" data-variant-link="xiangqi">中国象棋</a>
+    </nav>
+  </header>
+
+  <div class="online-page">
+    <p class="panel-lead">同一 Wi‑Fi 下创建房间，把链接发给对手。进房后去对弈页互下。</p>
+    <div class="online-form">
+      <label class="field">
+        <span>昵称</span>
+        <input id="player-name" value="玩家" maxlength="24">
+      </label>
+      <label class="field">
+        <span>座位</span>
+        <select id="seat-color">
+          <option value="red">红方</option>
+          <option value="black">黑方</option>
+        </select>
+      </label>
+      <button class="accent" id="btn-create" type="button">创建房间</button>
+      <label class="field grow">
+        <span>房间码</span>
+        <input id="room-code" placeholder="六位房间码" maxlength="8">
+      </label>
+      <button id="btn-join" type="button">加入房间</button>
+      <button id="btn-copy" type="button">复制链接</button>
+      <button class="accent" id="btn-goto-play" type="button">进入对弈</button>
+    </div>
+    <p id="online-status" class="tool-hint">尚未加入房间</p>
+  </div>
+</div>
+
+<nav class="app-tabbar" aria-label="主导航">
+  <a class="tabbar-item" href="index.html">对弈</a>
+  <a class="tabbar-item" href="learn.html">学习</a>
+  <a class="tabbar-item is-active" href="online.html" aria-current="page">联机</a>
+  <a class="tabbar-item" href="tools.html">工具</a>
+</nav>
+
+<script src="/shared/variant-switch.js"></script>
+<script src="app.js?v=12"></script>
+</body>
+</html>

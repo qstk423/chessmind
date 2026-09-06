@@ -1,0 +1,39 @@
+/* 顶栏棋种切换：一条细分割，不做双卡片门户 */
+.variant-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  padding: 2px;
+  border: 1px solid rgba(242, 235, 224, 0.14);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  font-family: "Source Sans 3", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.variant-switch a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: rgba(242, 235, 224, 0.62);
+  text-decoration: none;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.variant-switch a:hover {
+  color: #f2ebe0;
+}
+.variant-switch a.is-active {
+  color: #17271f;
+  background: linear-gradient(135deg, #d2b06a, #c49a4a);
+}
+@media (max-width: 480px) {
+  .variant-switch a {
+    padding: 0 10px;
+    font-size: 0.72rem;
+  }
+}

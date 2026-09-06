@@ -3,19 +3,29 @@ from io import StringIO
 from typing import Literal
 
 import chess.pgn
-from fastapi import APIRouter, File, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel, Field, ValidationError
 
 from src.board.fen_edit import board_grid, set_square_piece, set_turn
 from src.board.game_state import GameState
 from src.board.vision_fen import fen_from_image_bytes
-from src.config import PGN_MAX_PLIES
+from src.config import APP_VERSION, PGN_MAX_PLIES
 from src.council.demos import list_demos
 from src.guardrails import is_admin, require_admin, require_owner_id
 from src.library.catalog import list_library
 from src.llm_logger import recent_logs
 from src.sessions import orchestrator, pool
 from src.storage import adopt_orphan_games, delete_game, get_game, list_games
+from src.visitor import mint_owner_id, owner_signing_enabled
 
 router = APIRouter()
 
@@ -499,11 +509,23 @@ async def vision_fen(
     return {"status": "ok", "vision": result, "state": state, "analysis": analysis}
 
 
+@router.get("/visitor")
+def visitor_token():
+    """签发本机访客身份（可选 HMAC；设置 OWNER_SECRET 后历史接口强制校验）。"""
+    return {
+        "owner_id": mint_owner_id(),
+        "signing": owner_signing_enabled(),
+        "header": "X-Owner-Id",
+    }
+
+
 @router.get("/health")
 async def health(
     request: Request,
     ping_llm: bool = Query(False, description="是否实际 ping 一次大模型"),
 ):
+    from src.rooms import room_manager
+
     if ping_llm:
         require_admin(request)
         return await orchestrator.health()
@@ -516,9 +538,14 @@ async def health(
         "mode": state["mode"],
         "game_id": state["game_id"],
         "product": state.get("product", "ChessCouncil"),
+        "version": APP_VERSION,
+        "variants": ["chess", "xiangqi"],
         "llm_ping": "not_requested",
         "public_ready": True,
         "sessions": "header",
+        "owner_signing": owner_signing_enabled(),
+        "session_pool": pool.stats(),
+        "room_pool": room_manager.stats(),
     }
 
 

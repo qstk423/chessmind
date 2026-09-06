@@ -27,8 +27,7 @@ if [[ -n "$pids" ]]; then
 fi
 
 echo "启动 ChessCouncil → http://${HOST}:${PORT}/ （RELOAD=${RELOAD}）"
-extra=()
 if [[ "$RELOAD" == "1" || "$RELOAD" == "true" ]]; then
-  extra+=(--reload)
+  exec .venv/bin/python -m uvicorn src.main:app --host "$HOST" --port "$PORT" --reload
 fi
-exec .venv/bin/python -m uvicorn src.main:app --host "$HOST" --port "$PORT" "${extra[@]}"
+exec .venv/bin/python -m uvicorn src.main:app --host "$HOST" --port "$PORT"

@@ -101,6 +101,10 @@ class RoomManager:
         for rid in dead:
             self.rooms.pop(rid, None)
 
+    def stats(self) -> dict[str, int]:
+        self._purge_expired()
+        return {"active": len(self.rooms), "max": self.max_rooms}
+
     async def create(self, *, host_name: str = "白方", host_color: Color = "white") -> dict[str, Any]:
         async with self._lock:
             self._purge_expired()

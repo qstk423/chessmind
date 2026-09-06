@@ -5,7 +5,6 @@ from typing import Any
 
 from src.board.move_evaluator import MoveEvaluator
 
-
 CLASS_SCORE = {
     "brilliant": 3,
     "great": 2,

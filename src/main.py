@@ -1,17 +1,20 @@
-"""ChessCouncil 入口——启动 FastAPI 服务"""
+"""ChessCouncil 入口——国际象棋 + 中国象棋 同一进程。"""
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.api.online import router as rooms_router
-from src.api.routes import orchestrator, router
+from src.api.online import router as chess_rooms_router
+from src.api.routes import orchestrator, router as chess_router
 from src.guardrails import check_rate_limit
 from src.storage import init_db
+from src.xiangqi.api.online import router as xiangqi_rooms_router
+from src.xiangqi.api.routes import router as xiangqi_router
 
 
 @asynccontextmanager
@@ -25,7 +28,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ChessCouncil",
-    description="多 Agent 协作辩论的实时国际象棋分析与对战系统",
+    description="多智能体理事会：国际象棋 + 中国象棋",
+    version=os.getenv("APP_VERSION", "0.5.0"),
     lifespan=lifespan,
 )
 
@@ -43,15 +47,39 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(self), microphone=(), geolocation=()",
+        )
+        if "Content-Security-Policy" not in response.headers:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "img-src 'self' data: blob: https:; "
+                "media-src 'self' blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "connect-src 'self' ws: wss: http: https:; "
+                "font-src 'self' data:; "
+                "frame-ancestors 'self'"
+            )
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
-# 公开展示建议收紧；开发默认同源可用 *
 _cors = os.getenv("CORS_ORIGINS", "*").strip()
 _origins = ["*"] if _cors == "*" else [o.strip() for o in _cors.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
-    allow_credentials=True,
+    allow_credentials=_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -69,12 +97,33 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-app.include_router(router, prefix="/api")
-app.include_router(rooms_router, prefix="/api")
+# 国际象棋：正式前缀 + 兼容旧 /api 别名
+app.include_router(chess_router, prefix="/api/chess")
+app.include_router(chess_rooms_router, prefix="/api/chess")
+app.include_router(chess_router, prefix="/api")
+app.include_router(chess_rooms_router, prefix="/api")
 
-frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
-if os.path.exists(frontend_path):
-    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+# 中国象棋
+app.include_router(xiangqi_router, prefix="/api/xiangqi")
+app.include_router(xiangqi_rooms_router, prefix="/api/xiangqi")
+
+frontend_path = Path(__file__).resolve().parent.parent / "frontend"
+
+
+@app.get("/")
+async def root_entry():
+    """瞬时入口：按 localStorage 上次棋种跳转（见 frontend/index.html）。"""
+    return FileResponse(frontend_path / "index.html")
+
+
+if frontend_path.exists():
+    app.mount("/chess", StaticFiles(directory=frontend_path / "chess", html=True), name="chess_ui")
+    app.mount(
+        "/xiangqi", StaticFiles(directory=frontend_path / "xiangqi", html=True), name="xiangqi_ui"
+    )
+    shared = frontend_path / "shared"
+    if shared.exists():
+        app.mount("/shared", StaticFiles(directory=shared), name="shared")
 
 
 def main():

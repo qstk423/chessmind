@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from src.agents.base_agent import BaseAgent
-from src.agents.schema import AgentOpinion, JSON_OUTPUT_RULES
+from src.agents.schema import JSON_OUTPUT_RULES, AgentOpinion
 
 CoachLevel = Literal["beginner", "intermediate", "advanced"]
 

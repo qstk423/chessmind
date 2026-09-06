@@ -1,7 +1,9 @@
 """Stockfish 引擎集成——评分与胜率转换"""
 import asyncio
+
 import chess
 import chess.engine
+
 from src.config import STOCKFISH_PATH
 
 

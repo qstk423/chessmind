@@ -4,15 +4,14 @@ from __future__ import annotations
 from typing import Any
 
 from src.agents.base_agent import BaseAgent
+from src.agents.risk import RiskAgent
 from src.agents.schema import (
-    AgentOpinion,
     JSON_OUTPUT_RULES,
+    AgentOpinion,
     normalize_move_token,
 )
-from src.agents.risk import RiskAgent
 from src.agents.strategic import StrategicAgent
 from src.agents.tactical import TacticalAgent
-
 
 ARBITER_PROMPT = f"""你是 ChessCouncil 的仲裁官（agent id: arbiter）。
 

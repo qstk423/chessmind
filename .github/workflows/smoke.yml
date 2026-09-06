@@ -22,4 +22,10 @@ jobs:
         env:
           STOCKFISH_PATH: stockfish
           LLM_API_KEY: ""
-        run: pytest -q tests/test_api_smoke.py
+        run: |
+          pytest -q tests/test_api_smoke.py tests/xiangqi/
+      - name: Export OpenAPI snapshot
+        env:
+          STOCKFISH_PATH: stockfish
+          LLM_API_KEY: ""
+        run: python scripts/export_openapi.py

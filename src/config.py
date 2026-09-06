@@ -36,3 +36,7 @@ PGN_MAX_PLIES = max(1, int(os.getenv("PGN_MAX_PLIES", "40")))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 # 公开展示：未设 ADMIN_TOKEN 时拒绝敏感接口
 PUBLIC_DEMO = os.getenv("PUBLIC_DEMO", "").strip().lower() in ("1", "true", "yes", "on")
+# 可选：签名访客身份。设置后 X-Owner-Id 必须由 /api/visitor 签发
+OWNER_SECRET = os.getenv("OWNER_SECRET", "").strip()
+# 产品版本（OpenAPI / health 共用）
+APP_VERSION = os.getenv("APP_VERSION", "0.4.1").strip() or "0.4.1"

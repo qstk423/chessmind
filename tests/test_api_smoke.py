@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from contextvars import copy_context
+from pathlib import Path
 
 import chess
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from src.config import PGN_MAX_PLIES
 from src.council.review import compute_accuracy
+from src.guardrails import _hits, check_rate_limit
 from src.llm_logger import log_llm_call, set_context
 from src.main import app
 from src.storage import delete_game, upsert_game
@@ -23,12 +26,90 @@ def _headers(session: str, owner: str = "owner_smoke_test_01") -> dict[str, str]
     }
 
 
+def _rate_request(path: str, session: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": path,
+            "query_string": b"",
+            "headers": [(b"x-session-id", session.encode())],
+            "client": ("203.0.113.10", 1234),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+    )
+
+
 def test_health():
     r = client.get("/api/health")
     assert r.status_code == 200
     body = r.json()
     assert "llm_enabled" in body
     assert "llm_model" in body
+    assert "active" in (body.get("session_pool") or {})
+    assert "active" in (body.get("room_pool") or {})
+    assert body.get("variants") == ["chess", "xiangqi"]
+    assert r.headers.get("X-Content-Type-Options") == "nosniff"
+    assert "default-src" in (r.headers.get("Content-Security-Policy") or "")
+
+
+def test_session_pool_counts_after_resolve():
+    h = _headers("smoke_sess_pool_count")
+    client.post("/api/game/new", json={"mode": "human_vs_human", "with_analysis": False}, headers=h)
+    body = client.get("/api/health").json()
+    assert body["session_pool"]["active"] >= 1
+    assert body["session_pool"]["max"] >= body["session_pool"]["active"]
+
+
+def test_playback_rate_limit_does_not_stop_fast_ai_game():
+    _hits.clear()
+    req = _rate_request("/api/game/ai-step", "smoke-fast-playback")
+    # 旧实现把整个 /api/game 归为 30/min，快档数秒即中断。
+    for _ in range(100):
+        check_rate_limit(req)
+
+
+def test_pwa_precaches_current_app_bundle():
+    root = Path(__file__).resolve().parent.parent
+    sw = (root / "frontend" / "chess" / "sw.js").read_text(encoding="utf-8")
+    html = "\n".join(
+        (root / "frontend" / "chess" / name).read_text(encoding="utf-8")
+        for name in ("index.html", "learn.html", "online.html", "tools.html")
+    )
+    assert "app.js?v=mapp13" in html
+    assert "'/chess/app.js?v=mapp13'" in sw
+    assert (root / "frontend" / "xiangqi" / "index.html").is_file()
+    assert (root / "frontend" / "shared" / "variant-switch.js").is_file()
+    assert 'const API = \'/api/xiangqi\'' in (root / "frontend" / "xiangqi" / "app.js").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_chess_prefix_aliases_legacy_api():
+    h = _headers("smoke_chess_prefix")
+    legacy = client.post(
+        "/api/game/new",
+        json={"mode": "human_vs_human", "with_analysis": False},
+        headers=h,
+    )
+    prefixed = client.post(
+        "/api/chess/game/new",
+        json={"mode": "human_vs_human", "with_analysis": False},
+        headers=_headers("smoke_chess_prefix_b"),
+    )
+    assert legacy.status_code == 200
+    assert prefixed.status_code == 200
+
+
+def test_xiangqi_health_and_move():
+    h = {"X-Session-Id": "smoke_xq_move"}
+    assert client.get("/api/xiangqi/health").status_code == 200
+    r = client.post("/api/xiangqi/game/new", json={}, headers=h)
+    assert r.status_code == 200
+    move = client.post("/api/xiangqi/game/move", json={"uci": "b0c2"}, headers=h)
+    assert move.status_code == 200
+    assert "fen" in move.json()
 
 
 def test_new_game_and_move_same_session():
@@ -53,6 +134,7 @@ def test_new_game_and_move_same_session():
     assert fen1 and fen1 != fen0
     state = client.get("/api/game/state", headers=h).json()
     assert state.get("move_count") == 1
+    assert state.get("fen_start") == fen0
     assert "4P3" in state["fen"] or state["fen"].startswith("rnbqkbnr/pppppppp/8/8/4P3")
 
 
@@ -182,3 +264,43 @@ def test_pgn_cap():
     )
     assert r.status_code == 400
     assert "上限" in str(r.json().get("detail", ""))
+
+
+def test_visitor_and_openapi_core_paths():
+    v = client.get("/api/visitor")
+    assert v.status_code == 200
+    owner = v.json()["owner_id"]
+    assert owner.startswith("v1.")
+    assert len(owner) >= 8
+
+    spec = client.get("/openapi.json").json()
+    paths = spec.get("paths") or {}
+    for p in ("/api/health", "/api/visitor", "/api/game/new", "/api/games", "/api/rooms"):
+        assert p in paths, p
+    assert spec.get("info", {}).get("title")
+
+
+def test_owner_signing_rejects_forged(monkeypatch):
+    monkeypatch.setenv("OWNER_SECRET", "test-owner-secret-xyz")
+    # 重新加载校验模块中的密钥
+    import importlib
+
+    import src.config as cfg
+    import src.visitor as vis
+
+    importlib.reload(cfg)
+    monkeypatch.setattr(vis, "OWNER_SECRET", "test-owner-secret-xyz")
+    from src.visitor import mint_owner_id, verify_owner_id
+
+    good = mint_owner_id()
+    assert verify_owner_id(good) == good
+    try:
+        verify_owner_id("v1.forged.1234567890.deadbeefdeadbeefdeadbeefdeadbeef")
+        assert False, "should reject"
+    except ValueError:
+        pass
+    try:
+        verify_owner_id("owner_smoke_test_01")
+        assert False, "legacy should reject when signing on"
+    except ValueError:
+        pass

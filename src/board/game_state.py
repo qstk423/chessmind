@@ -1,8 +1,9 @@
 """棋局状态管理——基于 python-chess 封装"""
-import chess
-import chess.pgn
 from dataclasses import dataclass, field
 from datetime import datetime
+
+import chess
+import chess.pgn
 
 # 和棋原因的中文说明（不含将杀）
 DRAW_REASONS = {

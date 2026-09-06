@@ -29,6 +29,11 @@ class OrchestratorPool:
             self._map.pop(oldest, None)
             self._touched.pop(oldest, None)
 
+    def stats(self) -> dict[str, int]:
+        with self._lock:
+            self._purge()
+            return {"active": len(self._map), "max": _MAX_SESSIONS}
+
     def resolve(self, session_id: str | None) -> tuple[str, ChessMindOrchestrator]:
         with self._lock:
             self._purge()

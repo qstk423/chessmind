@@ -1,0 +1,1 @@
+"""Xiangqi Council server package."""

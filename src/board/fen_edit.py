@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import chess
 
-
 PIECE_MAP = {
     "K": chess.Piece.from_symbol("K"),
     "Q": chess.Piece.from_symbol("Q"),

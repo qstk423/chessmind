@@ -9,12 +9,17 @@
 <title>联机 · ChessCouncil</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<link rel="stylesheet" href="style.css?v=mapp5">
+<link rel="stylesheet" href="style.css?v=mapp8">
+<link rel="stylesheet" href="/shared/variant-switch.css">
 </head>
 <body class="page-online" data-page="online">
 <div class="app-shell page-shell">
   <header class="topbar topbar-compact">
     <div class="brand"><div class="brand-mark" aria-hidden="true"></div><h1>联机</h1></div>
+    <nav class="variant-switch" aria-label="棋种">
+      <a href="/chess/online.html" data-variant-link="chess">国际象棋</a>
+      <a href="/xiangqi/online.html" data-variant-link="xiangqi">中国象棋</a>
+    </nav>
   </header>
   <p id="ops-banner" class="ops-banner" hidden></p>
   <div id="toast-host" class="toast-host" aria-live="polite"></div>
@@ -48,6 +53,7 @@
 <script src="vendor/jquery-3.7.1.min.js"></script>
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
-<script src="app.js?v=mapp7"></script>
+<script src="/shared/variant-switch.js"></script>
+<script src="app.js?v=mapp13"></script>
 </body>
 </html>

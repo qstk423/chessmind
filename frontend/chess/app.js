@@ -1,19 +1,43 @@
 // ChessMind 前端逻辑——人机 / AI vs AI 算法对抗
-const API = '/api';
+const API = '/api/chess';
 const PREFS_KEY = 'cc_prefs_v1';
 const ADMIN_TOKEN_KEY = 'cc_admin_token';
-const OWNER_KEY = 'cc_owner_id';
+const OWNER_KEY = 'cc_owner_id_v2';
+const OWNER_KEY_LEGACY = 'cc_owner_id';
 const SESSION_KEY = 'cc_session_id';
 const PAGE = document.body?.dataset?.page || 'play';
 const HANDOFF_KEY = 'cc_page_handoff_v1';
 
 function getOwnerId() {
-  let id = localStorage.getItem(OWNER_KEY);
+  let id = localStorage.getItem(OWNER_KEY) || localStorage.getItem(OWNER_KEY_LEGACY);
   if (!id || id.length < 8) {
     id = (crypto.randomUUID && crypto.randomUUID()) || `cc_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     localStorage.setItem(OWNER_KEY, id);
   }
   return id;
+}
+
+async function ensureVisitorOwner() {
+  const existing = localStorage.getItem(OWNER_KEY) || localStorage.getItem(OWNER_KEY_LEGACY);
+  let needMint = !existing || existing.length < 8;
+  if (!needMint) {
+    try {
+      const h = await fetch(`${API}/health`).then((r) => r.json());
+      if (h.owner_signing && !String(existing).startsWith('v1.')) needMint = true;
+    } catch (_) {}
+  }
+  if (!needMint) {
+    if (existing && !localStorage.getItem(OWNER_KEY)) localStorage.setItem(OWNER_KEY, existing);
+    return existing;
+  }
+  try {
+    const data = await fetch(`${API}/visitor`).then((r) => r.json());
+    if (data.owner_id) {
+      localStorage.setItem(OWNER_KEY, data.owner_id);
+      return data.owner_id;
+    }
+  } catch (_) {}
+  return getOwnerId();
 }
 
 function getSessionId() {
@@ -119,11 +143,15 @@ function togglePlayback() {
     startLibraryAuto();
     return;
   }
-  if (serverState.mode === 'ai_vs_ai' || serverState.mode === 'human_vs_ai') {
+  if (serverState.mode === 'ai_vs_ai') {
     startAuto();
     return;
   }
-  showToast('请先开人机/机机对局，或加载名谱后再播放', 'error');
+  if (serverState.mode === 'human_vs_ai') {
+    showToast('人机局请自己走子，AI 会自动应着；机机局再用「播放」', 'error');
+    return;
+  }
+  showToast('请先开 AI vs AI 对局，或加载名谱后再播放', 'error');
 }
 
 /** 联机房间 */
@@ -265,6 +293,8 @@ let challengeLevelsCache = [];
 
 /** 本局着法回放（机机象棋式着法列表） */
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const LAST_ROOM_KEY = 'cc_last_room';
+let gameStartFen = START_FEN;
 let plyLog = []; // {number,san,uci,fen,classification?}
 let viewPly = 0; // 0=开局，n=第 n 步后
 let browsingHistory = false;
@@ -468,7 +498,8 @@ function gotoPly(ply, { fromBrowse = true } = {}) {
   const target = Math.max(0, Math.min(max, ply));
   viewPly = target;
   browsingHistory = fromBrowse && target < max;
-  const fen = target === 0 ? START_FEN : (plyLog[target - 1] && plyLog[target - 1].fen);
+  const startFen = gameStartFen || START_FEN;
+  const fen = target === 0 ? startFen : (plyLog[target - 1] && plyLog[target - 1].fen);
   if (!fen) return;
   game.load(fen);
   if (board) board.position(fen, false);
@@ -497,7 +528,13 @@ function jumpToFen(fen, meta) {
     gotoPly(0);
     return;
   }
-  if (fen && (fen === START_FEN || fen.startsWith('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR'))) {
+  const startFen = gameStartFen || START_FEN;
+  if (
+    fen &&
+    (fen === startFen ||
+      fen === START_FEN ||
+      (startFen === START_FEN && fen.startsWith('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR')))
+  ) {
     gotoPly(0);
     return;
   }
@@ -687,6 +724,22 @@ async function syncFromServer() {
   return state;
 }
 
+function rememberStartFen(state) {
+  if (!state) return;
+  if (state.fen_start) {
+    gameStartFen = state.fen_start;
+    return;
+  }
+  const first = (state.moves || [])[0];
+  if (first && first.fen_before) {
+    gameStartFen = first.fen_before;
+    return;
+  }
+  if (state.fen && !(state.moves && state.moves.length)) {
+    gameStartFen = state.fen;
+  }
+}
+
 function applyServerState(state) {
   serverState = {
     mode: state.mode || 'human_vs_human',
@@ -694,6 +747,7 @@ function applyServerState(state) {
     human_color: state.human_color || 'white',
     is_game_over: !!state.is_game_over,
   };
+  rememberStartFen(state);
   if (state.llm_model) {
     const on = state.llm_enabled ? '已启用' : '未配置 Key（纯引擎）';
     $('#llm-status').text(`模型：${state.llm_model} · ${on}`);
@@ -1227,6 +1281,7 @@ function resetPanels() {
   plyLog = [];
   viewPly = 0;
   browsingHistory = false;
+  gameStartFen = START_FEN;
   renderMoveList();
   updatePlyNavLabel();
   analysisGen += 1;
@@ -1282,7 +1337,7 @@ async function runAiStep(opts = {}) {
     const r = await fetch(`${API}/game/ai-step`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ with_analysis: useCouncil }),
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -1333,8 +1388,8 @@ function scheduleAuto() {
 }
 
 function startAuto() {
-  if (serverState.mode !== 'ai_vs_ai' && serverState.mode !== 'human_vs_ai') {
-    alert('请先选择「AI vs AI」或「人 vs AI」模式并开新对局');
+  if (serverState.mode !== 'ai_vs_ai') {
+    alert('自动播放仅用于「AI vs AI」。人机请自行走子，AI 会应着。');
     return;
   }
   stopLibraryAuto();
@@ -1778,7 +1833,7 @@ $('#btn-ping-llm').click(async () => {
   }
 });
 
-$('#btn-analyze-pos').click(async () => {
+async function analyzeCurrentPosition() {
   if (PAGE !== 'play' || !board) {
     goToPlay({ kind: 'analyze', title: '局面分析' });
     return;
@@ -1807,7 +1862,9 @@ $('#btn-analyze-pos').click(async () => {
     setProgress(null);
     busy = false;
   }
-});
+}
+
+$('#btn-analyze-pos').click(() => analyzeCurrentPosition());
 
 async function compressImageFile(file, maxSide = 1280, quality = 0.82) {
   if (!file || !file.type.startsWith('image/')) return file;
@@ -1881,7 +1938,7 @@ $('#btn-vision').click(async () => {
     if (PAGE !== 'play' || !board) {
       $('#vision-status').text('已映射，正在打开对弈页…');
       goToPlay({
-        kind: 'sync',
+        kind: data.analysis ? 'analyze' : 'sync',
         title: '识谱局面',
         openEdit: !data.analysis,
       });
@@ -2224,14 +2281,17 @@ function stopLibraryAuto() {
 }
 
 function updateLibraryChrome(lib) {
+  const bar = $('#lib-bar');
   if (!lib) {
     currentLibraryHasScript = false;
     $('#lib-status').text('');
+    bar.prop('hidden', true);
     $('#btn-lib-step, #btn-lib-auto, #btn-lib-ai').prop('disabled', true);
     $('#btn-lib-stop').prop('disabled', true);
     return;
   }
   currentLibraryHasScript = !!lib.has_script;
+  bar.prop('hidden', false);
   const prog = lib.has_script
     ? `跟谱 ${lib.index || 0}/${lib.total_moves || 0}`
     : '局面体验（无固定名谱）';
@@ -2244,7 +2304,7 @@ function updateLibraryChrome(lib) {
   $('#btn-lib-stop').prop('disabled', !libraryAuto);
 }
 
-async function loadLibraryItem(itemId, { mode, forAi, thenAuto } = {}) {
+async function loadLibraryItem(itemId, { mode, forAi, thenAuto, thenAnalyze } = {}) {
   if (online.active) {
     alert('请先退出联机房间，再加载名局/残局');
     return;
@@ -2269,7 +2329,7 @@ async function loadLibraryItem(itemId, { mode, forAi, thenAuto } = {}) {
 
   if (PAGE !== 'play' || !board) {
     goToPlay({
-      kind: forAi ? 'ai-auto' : thenAuto ? 'lib-auto' : 'sync',
+      kind: forAi ? 'ai-auto' : thenAuto ? 'lib-auto' : thenAnalyze ? 'analyze' : 'sync',
       title: state.library?.title || itemId,
       orientBlack: String(state.turn || '').startsWith('b'),
     });
@@ -2282,6 +2342,7 @@ async function loadLibraryItem(itemId, { mode, forAi, thenAuto } = {}) {
   board.position(state.fen, false);
   selectedSquare = null;
   clearHighlights();
+  syncPlyLogFromMoves(state.moves || []);
   if ((state.turn || '').startsWith('b')) {
     orientation = 'black';
     board.orientation('black');
@@ -2299,6 +2360,8 @@ async function loadLibraryItem(itemId, { mode, forAi, thenAuto } = {}) {
     startAuto();
   } else if (thenAuto) {
     startLibraryAuto();
+  } else if (thenAnalyze) {
+    await analyzeCurrentPosition();
   }
 }
 
@@ -2415,8 +2478,7 @@ async function loadLibraryList() {
         row.append(
           $('<button type="button">Council</button>').on('click', async () => {
             clearChallenge();
-            await loadLibraryItem(it.id, { mode: 'human_vs_human' });
-            $('#btn-analyze-pos').click();
+            await loadLibraryItem(it.id, { mode: 'human_vs_human', thenAnalyze: true });
           })
         );
       }
@@ -2640,8 +2702,8 @@ async function startChallengeLevel(lv) {
 
 $('.learn-mode-tab').click(function () {
   const mode = $(this).attr('data-learn');
-  $('.learn-mode-tab').removeClass('active');
-  $(this).addClass('active');
+  $('.learn-mode-tab').removeClass('active').attr({ 'aria-selected': 'false', tabindex: '-1' });
+  $(this).addClass('active').attr({ 'aria-selected': 'true', tabindex: '0' });
   if (mode === 'challenge') {
     $('#learn-library').attr('hidden', true);
     $('#learn-challenge').removeAttr('hidden');
@@ -2651,6 +2713,20 @@ $('.learn-mode-tab').click(function () {
     $('#learn-library').removeAttr('hidden');
     loadLibraryList();
   }
+});
+
+$('.learn-mode-tabs').on('keydown', '.learn-mode-tab', function (ev) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) return;
+  const tabs = $('.learn-mode-tab').toArray();
+  const current = tabs.indexOf(this);
+  let next = current;
+  if (ev.key === 'ArrowRight') next = (current + 1) % tabs.length;
+  if (ev.key === 'ArrowLeft') next = (current - 1 + tabs.length) % tabs.length;
+  if (ev.key === 'Home') next = 0;
+  if (ev.key === 'End') next = tabs.length - 1;
+  ev.preventDefault();
+  ev.stopPropagation();
+  $(tabs[next]).trigger('click').trigger('focus');
 });
 
 $(document).on('click', '#btn-challenge-quit', () => {
@@ -2677,9 +2753,7 @@ $('#btn-lib-ai').click(() => {
 });
 
 function roomShareUrl(roomId) {
-  const u = new URL(window.location.href);
-  u.searchParams.set('room', roomId);
-  return u.toString();
+  return new URL(`index.html?room=${encodeURIComponent(roomId)}`, window.location.href).toString();
 }
 
 function saveOnlineSession() {
@@ -2688,6 +2762,9 @@ function saveOnlineSession() {
     `chesscouncil_room_${online.roomId}`,
     JSON.stringify({ token: online.token, color: online.color, name: online.name })
   );
+  try {
+    sessionStorage.setItem(LAST_ROOM_KEY, online.roomId);
+  } catch (_) {}
 }
 
 function loadOnlineSession(roomId) {
@@ -2702,12 +2779,16 @@ function updateOnlineChrome() {
   const bar = $('#online-bar');
   if (!online.active) {
     bar.removeClass('is-online');
-    $('#online-status').text('本地模式 · 可开房间用手机互下');
-    $('#btn-room-copy, #btn-room-leave').prop('hidden', true);
+    if (PAGE === 'play') bar.prop('hidden', true);
+    else {
+      bar.prop('hidden', false);
+      $('#online-status').text('本地模式 · 可开房间用手机互下');
+    }
+    $('#btn-room-copy, #btn-room-leave').prop('hidden', PAGE === 'play');
     $('#btn-room-create, #btn-room-join').prop('disabled', false);
     return;
   }
-  bar.addClass('is-online');
+  bar.prop('hidden', false).addClass('is-online');
   const colorLabel = online.color === 'white' ? '白' : '黑';
   $('#online-status').text(`房间 ${online.roomId} · 你执${colorLabel} · 已连接`);
   $('#online-room-code').val(online.roomId);
@@ -2745,6 +2826,16 @@ function applyOnlineMovePayload(data) {
   const mv = data.move;
   if (mv && mv.uci && mv.uci.length >= 4) {
     markLastMove(mv.uci.slice(0, 2), mv.uci.slice(2, 4));
+    appendPlyFromMove({
+      move: {
+        number: mv.number || plyLog.length + 1,
+        san: mv.san || mv.uci,
+        uci: mv.uci,
+      },
+      fen: state.fen,
+    });
+  } else if (state.moves) {
+    syncPlyLogFromMoves(state.moves);
   }
   busy = false;
   if (state.is_game_over) {
@@ -2756,6 +2847,7 @@ async function syncOnlineState() {
   if (!online.roomId) return;
   const state = await fetch(`${API}/rooms/${online.roomId}`).then((r) => r.json());
   applyOnlineBoardState(state);
+  if (state.moves) syncPlyLogFromMoves(state.moves);
 }
 
 function disconnectOnlineWs() {
@@ -2776,7 +2868,7 @@ function connectOnlineWs() {
   if (!online.roomId || !online.token) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(
-    `${proto}://${location.host}/api/rooms/${online.roomId}/ws?token=${encodeURIComponent(online.token)}`
+    `${proto}://${location.host}${API}/rooms/${online.roomId}/ws?token=${encodeURIComponent(online.token)}`
   );
   online.ws = ws;
   ws.onopen = () => {
@@ -2802,6 +2894,7 @@ function connectOnlineWs() {
       hideFinale();
       clearLastMoveMarkers();
       applyOnlineBoardState(msg.state);
+      syncPlyLogFromMoves((msg.state && msg.state.moves) || []);
       return;
     }
     if (msg.type === 'error') {
@@ -2829,6 +2922,7 @@ async function enterOnlineRoom(session) {
   $('#game-mode').val('human_vs_human');
   refreshModeControls();
   applyOnlineBoardState(session.state);
+  syncPlyLogFromMoves((session.state && session.state.moves) || []);
   updateOnlineChrome();
   connectOnlineWs();
   if (PAGE !== 'play') {
@@ -2846,6 +2940,9 @@ function leaveOnlineRoom() {
   online.roomId = null;
   online.token = null;
   online.color = null;
+  try {
+    sessionStorage.removeItem(LAST_ROOM_KEY);
+  } catch (_) {}
   updateOnlineChrome();
   const u = new URL(window.location.href);
   u.searchParams.delete('room');
@@ -2990,7 +3087,7 @@ async function applyPlayHandoff(handoff) {
   } else if (handoff.kind === 'demo') {
     await runDemoById(handoff.demoId, handoff.title);
   } else if (handoff.kind === 'analyze') {
-    $('#btn-analyze-pos').trigger('click');
+    await analyzeCurrentPosition();
   } else if (handoff.kind === 'ai-fast') {
     $('#game-mode').val('ai_vs_ai');
     $('#with-analysis').prop('checked', false);
@@ -3022,12 +3119,25 @@ async function bootPlay() {
   });
 
   const handoff = consumeHandoff();
-  const roomParam = new URLSearchParams(location.search).get('room');
+  const params = new URLSearchParams(location.search);
+  const lastRoom = (() => {
+    try {
+      return sessionStorage.getItem(LAST_ROOM_KEY);
+    } catch (_) {
+      return null;
+    }
+  })();
+  const roomParam = params.get('room') || (!handoff ? lastRoom : null);
 
   if (roomParam) {
     $('#online-room-code').val(roomParam.toUpperCase());
     const ok = await joinRoomByCode(roomParam);
-    if (!ok) await startNewGame();
+    if (!ok) {
+      try {
+        sessionStorage.removeItem(LAST_ROOM_KEY);
+      } catch (_) {}
+      await startNewGame();
+    }
   } else if (handoff && (handoff.kind === 'demo' || handoff.kind === 'ai-fast')) {
     if (handoff.kind === 'ai-fast') {
       await applyPlayHandoff(handoff);
@@ -3065,6 +3175,8 @@ async function bootOnline() {
   const roomParam = new URLSearchParams(location.search).get('room');
   if (roomParam) {
     $('#online-room-code').val(roomParam.toUpperCase());
+    const ok = await joinRoomByCode(roomParam);
+    if (!ok) $('#online-status').text('邀请房间加入失败，请核对房间码');
   }
 }
 
@@ -3078,6 +3190,7 @@ async function bootTools() {
 }
 
 $(document).ready(async () => {
+  await ensureVisitorOwner();
   if (PAGE === 'play') {
     await bootPlay();
     await refreshHealthBanner();
@@ -3090,6 +3203,6 @@ $(document).ready(async () => {
   }
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('/chess/sw.js').catch(() => {});
   }
 });

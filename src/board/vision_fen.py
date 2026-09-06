@@ -10,7 +10,13 @@ from typing import Any, Literal
 import chess
 from openai import AsyncOpenAI
 
-from src.config import LLM_API_KEY, LLM_BASE_URL, LLM_ENABLED, LLM_TIMEOUT_SEC, VISION_MODEL
+from src.config import (
+    LLM_API_KEY,
+    LLM_BASE_URL,
+    LLM_ENABLED,
+    LLM_TIMEOUT_SEC,
+    VISION_MODEL,
+)
 from src.llm_logger import log_llm_call
 
 FEN_PROMPT = """你是国际象棋棋盘视觉识别专家。用户拍了一张实体棋盘或屏幕截图。
