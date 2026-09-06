@@ -1,13 +1,13 @@
 /* ChessCouncil PWA：缓存静态壳，API 仍走网络 */
-const CACHE = 'cc-shell-mapp2';
+const CACHE = 'cc-shell-mapp5';
 const PRECACHE = [
   '/',
   '/index.html',
   '/learn.html',
   '/online.html',
   '/tools.html',
-  '/style.css?v=mapp2',
-  '/app.js?v=mapp2',
+  '/style.css?v=mapp5',
+  '/app.js?v=mapp5',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

@@ -90,3 +90,27 @@ def require_admin(request: Request) -> None:
         return
     if provided != token:
         raise HTTPException(status_code=403, detail="需要有效的管理口令（X-Admin-Token）")
+
+
+def is_admin(request: Request) -> bool:
+    """已配置 ADMIN_TOKEN 且口令匹配时为 True；未配置则不算管理员。"""
+    token = (ADMIN_TOKEN or "").strip()
+    if not token:
+        return False
+    provided = (
+        request.headers.get("x-admin-token")
+        or request.query_params.get("admin_token")
+        or ""
+    ).strip()
+    return provided == token
+
+
+def require_owner_id(request: Request) -> str:
+    """浏览器本地身份：历史读写必须带 X-Owner-Id。"""
+    owner = (request.headers.get("x-owner-id") or "").strip()
+    if len(owner) < 8 or len(owner) > 128:
+        raise HTTPException(
+            status_code=401,
+            detail="需要有效的 X-Owner-Id（本机身份，至少 8 字符）",
+        )
+    return owner

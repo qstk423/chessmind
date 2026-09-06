@@ -2,8 +2,32 @@
 const API = '/api';
 const PREFS_KEY = 'cc_prefs_v1';
 const ADMIN_TOKEN_KEY = 'cc_admin_token';
+const OWNER_KEY = 'cc_owner_id';
+const SESSION_KEY = 'cc_session_id';
 const PAGE = document.body?.dataset?.page || 'play';
 const HANDOFF_KEY = 'cc_page_handoff_v1';
+
+function getOwnerId() {
+  let id = localStorage.getItem(OWNER_KEY);
+  if (!id || id.length < 8) {
+    id = (crypto.randomUUID && crypto.randomUUID()) || `cc_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(OWNER_KEY, id);
+  }
+  return id;
+}
+
+function getSessionId() {
+  let sid = sessionStorage.getItem(SESSION_KEY);
+  if (!sid) {
+    sid = (crypto.randomUUID && crypto.randomUUID()) || `sess_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    sessionStorage.setItem(SESSION_KEY, sid);
+  }
+  return sid;
+}
+
+function rememberSession(sid) {
+  if (sid) sessionStorage.setItem(SESSION_KEY, sid);
+}
 
 function goToPlay(handoff = null) {
   try {
@@ -154,6 +178,14 @@ function adminHeaders() {
   return token ? { 'X-Admin-Token': token } : {};
 }
 
+function identityHeaders() {
+  return {
+    'X-Owner-Id': getOwnerId(),
+    'X-Session-Id': getSessionId(),
+    ...adminHeaders(),
+  };
+}
+
 function loadPrefs() {
   try {
     return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') || {};
@@ -184,7 +216,7 @@ function applyPrefs() {
 
 async function apiFetch(url, options = {}) {
   const opts = { ...options };
-  const headers = { ...(opts.headers || {}), ...adminHeaders() };
+  const headers = { ...(opts.headers || {}), ...identityHeaders() };
   opts.headers = headers;
   let r;
   try {
@@ -193,6 +225,8 @@ async function apiFetch(url, options = {}) {
     showToast('网络错误，请检查服务是否在运行', 'error');
     throw err;
   }
+  const sid = r.headers.get('X-Session-Id');
+  if (sid) rememberSession(sid);
   if (r.status === 429) {
     const data = await r.json().catch(() => ({}));
     showToast(data.detail || '请求过于频繁，请稍后再试', 'error');
@@ -201,6 +235,32 @@ async function apiFetch(url, options = {}) {
   }
   return r;
 }
+
+/** 给所有 /api 请求自动附带会话与本地身份，避免全局棋盘互踩、历史越权 */
+(function patchApiFetch() {
+  const raw = window.fetch.bind(window);
+  window.fetch = function patchedFetch(input, init) {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const isApi = url.startsWith(API) || url.includes('/api/');
+    if (!isApi) return raw(input, init);
+    const next = init ? { ...init } : {};
+    const prev = next.headers;
+    if (prev instanceof Headers) {
+      const merged = new Headers(prev);
+      Object.entries(identityHeaders()).forEach(([k, v]) => {
+        if (!merged.has(k)) merged.set(k, v);
+      });
+      next.headers = merged;
+    } else {
+      next.headers = { ...identityHeaders(), ...(prev || {}) };
+    }
+    return raw(input, next).then((r) => {
+      const sid = r.headers.get('X-Session-Id');
+      if (sid) rememberSession(sid);
+      return r;
+    });
+  };
+})();
 let challengeLevelsCache = [];
 
 /** 本局着法回放（机机象棋式着法列表） */
@@ -912,7 +972,7 @@ function renderOpinion(op, title) {
         <span>推荐 ${escapeHtml(op.recommended_move || '—')}</span>
         <span>置信 ${Math.round((op.confidence || 0) * 100)}%</span>
         <span>风险 ${Math.round((op.risk || 0) * 100)}%</span>
-        <span>评估 ${op.evaluation ?? '—'}</span>
+        <span>评估 ${escapeHtml(String(op.evaluation ?? '—'))}</span>
         ${op.parse_ok === false ? '<span>⚠ 解析降级</span>' : ''}
       </div>
       ${formatText(op.summary)}
@@ -1650,19 +1710,26 @@ $('#btn-show-logs').click(() => {
 
 async function refreshLogs() {
   const box = $('#logs-list');
+  if (!box.length) return;
+  box.html('<div class="history-empty">加载调用日志…</div>');
   try {
-    const r = await apiFetch(`${API}/logs/recent?limit=15`);
+    const r = await apiFetch(`${API}/logs/recent?limit=20`);
     const data = await r.json().catch(() => ({}));
     if (r.status === 403) {
       box.html(
-        '<div class="history-empty">日志需管理口令。在控制台执行：' +
-          '<code>localStorage.setItem("cc_admin_token","你的ADMIN_TOKEN")</code></div>'
+        '<div class="history-empty">日志仅管理可见（大赛调用证明 / 排障）。' +
+          '控制台执行 <code>localStorage.setItem("cc_admin_token","你的ADMIN_TOKEN")</code> 后点刷新。' +
+          '普通玩家无需查看。</div>'
       );
+      return;
+    }
+    if (!r.ok) {
+      box.html('<div class="history-empty">日志接口不可用</div>');
       return;
     }
     const logs = data.logs || [];
     if (!logs.length) {
-      box.html('<div class="history-empty">尚无调用记录（跑一次 Demo 后刷新）</div>');
+      box.html('<div class="history-empty">尚无调用记录。走一步开 Council，或跑 Demo 后再刷新。</div>');
       return;
     }
     box.empty();
@@ -2007,14 +2074,12 @@ async function refreshHistory() {
     games.forEach((g) => {
       const item = $('<div class="history-item"></div>');
       const when = (g.updated_at || g.created_at || '').replace('T', ' ').slice(0, 19);
-      item.append(
-        $('<div></div>').html(
-          `<strong>${g.title || g.id.slice(0, 8)}</strong>` +
-            `<div class="meta">${when} · ${g.mode || '?'} · ${g.move_count || 0} 步` +
-            (g.result ? ` · ${g.result}` : '') +
-            `</div>`
-        )
-      );
+      const head = $('<div></div>');
+      head.append($('<strong></strong>').text(g.title || String(g.id || '').slice(0, 8)));
+      const metaBits = [when, g.mode || '?', `${g.move_count || 0} 步`];
+      if (g.result) metaBits.push(g.result);
+      head.append($('<div class="meta"></div>').text(metaBits.join(' · ')));
+      item.append(head);
       const actions = $('<div class="actions"></div>');
       const restore = $('<button type="button">恢复</button>').on('click', async () => {
         if (busy) return;
@@ -2039,7 +2104,7 @@ async function refreshHistory() {
           selectedSquare = null;
           clearHighlights();
           updateStatus();
-          $('#ai-meta').text(`已恢复历史局面 ${g.id.slice(0, 8)}`);
+          $('#ai-meta').text(`已恢复历史局面 ${String(g.id).slice(0, 8)}`);
         } finally {
           busy = false;
         }
@@ -2076,11 +2141,38 @@ $('#btn-save-game').click(async () => {
 });
 
 $('.tab').click(function () {
-  $('.tab').removeClass('active');
-  $('.tab-content').removeClass('active');
-  $(this).addClass('active');
-  $('#tab-' + $(this).data('tab')).addClass('active');
+  const name = $(this).data('tab');
+  $('.tab').each(function () {
+    const on = $(this).data('tab') === name;
+    $(this)
+      .toggleClass('active', on)
+      .attr({ role: 'tab', 'aria-selected': on ? 'true' : 'false', tabindex: on ? 0 : -1 });
+  });
+  $('.tab-content').removeClass('active').attr('role', 'tabpanel');
+  $('#tab-' + name).addClass('active');
 });
+
+$('.tabs[role="tablist"]').on('keydown', function (ev) {
+  const tabs = $(this).find('.tab').toArray();
+  if (!tabs.length) return;
+  const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+  if (!keys.includes(ev.key)) return;
+  const i = tabs.findIndex((t) => $(t).attr('aria-selected') === 'true');
+  let next = i < 0 ? 0 : i;
+  if (ev.key === 'ArrowRight') next = (i + 1) % tabs.length;
+  if (ev.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length;
+  if (ev.key === 'Home') next = 0;
+  if (ev.key === 'End') next = tabs.length - 1;
+  ev.preventDefault();
+  $(tabs[next]).trigger('click').focus();
+});
+
+// 初始化 tab 无障碍属性
+$('.tab').each(function () {
+  const on = $(this).hasClass('active');
+  $(this).attr({ role: 'tab', 'aria-selected': on ? 'true' : 'false', tabindex: on ? 0 : -1 });
+});
+$('.tab-content').attr('role', 'tabpanel');
 
 $('#btn-analyze-pgn').click(async () => {
   const pgn = $('#pgn-input').val().trim();
@@ -2104,7 +2196,7 @@ $('#btn-analyze-pgn').click(async () => {
         `<p>共分析 <strong>${data.total_moves}</strong> 步</p>` +
         data.moves.slice(-10).map(m =>
           `<div style="margin-bottom:8px;padding:8px;background:#2a2a4a;border-radius:4px">
-            <strong>第${escapeHtml(String(m.move.number))}步 ${escapeHtml(m.move.san)}</strong> [${m.evaluation.classification}]
+            <strong>第${escapeHtml(String(m.move.number))}步 ${escapeHtml(m.move.san)}</strong> [${escapeHtml(String(m.evaluation.classification || ''))}]
             <p style="margin-top:4px;font-size:0.85rem;color:#ccc">${escapeHtml(m.analysis.summary || '')}</p>
           </div>`
         ).join('')
@@ -2981,6 +3073,8 @@ async function bootTools() {
   await loadDemos();
   refreshHistory();
   await refreshHealthBanner();
+  // 调用日志：大赛证据 / 排障用；有口令则自动拉，无口令给出提示
+  await refreshLogs();
 }
 
 $(document).ready(async () => {

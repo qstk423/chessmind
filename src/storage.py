@@ -39,6 +39,12 @@ def init_db() -> None:
             )
             """
         )
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(games)").fetchall()}
+        if "owner_id" not in cols:
+            conn.execute("ALTER TABLE games ADD COLUMN owner_id TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_games_owner_updated ON games(owner_id, updated_at DESC)"
+        )
         conn.commit()
 
 
@@ -54,6 +60,7 @@ def upsert_game(
     move_count: int | None = None,
     review: dict[str, Any] | None = None,
     meta: dict[str, Any] | None = None,
+    owner_id: str | None = None,
 ) -> dict[str, Any]:
     init_db()
     now = datetime.now(timezone.utc).isoformat()
@@ -64,8 +71,8 @@ def upsert_game(
                 """
                 INSERT INTO games (
                     id, created_at, updated_at, mode, title, result,
-                    fen_start, fen_current, pgn, move_count, review_json, meta_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    fen_start, fen_current, pgn, move_count, review_json, meta_json, owner_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     game_id,
@@ -80,6 +87,7 @@ def upsert_game(
                     move_count or 0,
                     json.dumps(review, ensure_ascii=False) if review is not None else None,
                     json.dumps(meta, ensure_ascii=False) if meta is not None else None,
+                    owner_id,
                 ),
             )
         else:
@@ -93,6 +101,7 @@ def upsert_game(
                 "fen_current": fen_current,
                 "pgn": pgn,
                 "move_count": move_count,
+                "owner_id": owner_id,
             }
             for k, v in mapping.items():
                 if v is not None:
@@ -110,19 +119,32 @@ def upsert_game(
         return get_game(game_id) or {"id": game_id}
 
 
-def list_games(limit: int = 30) -> list[dict[str, Any]]:
+def list_games(limit: int = 30, owner_id: str | None = None) -> list[dict[str, Any]]:
     init_db()
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, created_at, updated_at, mode, title, result,
-                   fen_current, move_count, pgn
-            FROM games
-            ORDER BY updated_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+        if owner_id:
+            rows = conn.execute(
+                """
+                SELECT id, created_at, updated_at, mode, title, result,
+                       fen_current, move_count, pgn, owner_id
+                FROM games
+                WHERE owner_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (owner_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, created_at, updated_at, mode, title, result,
+                       fen_current, move_count, pgn, owner_id
+                FROM games
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -143,6 +165,22 @@ def get_game(game_id: str) -> dict[str, Any] | None:
         else:
             data[key.replace("_json", "")] = None
     return data
+
+
+def adopt_orphan_games(owner_id: str) -> int:
+    """将 owner_id 为空的历史记录归属到指定浏览器身份（升级兼容）。"""
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE games
+            SET owner_id = ?
+            WHERE owner_id IS NULL OR owner_id = ''
+            """,
+            (owner_id,),
+        )
+        conn.commit()
+        return cur.rowcount
 
 
 def delete_game(game_id: str) -> bool:

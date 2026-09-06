@@ -3,22 +3,21 @@ from io import StringIO
 from typing import Literal
 
 import chess.pgn
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, File, Header, HTTPException, Query, Request, Response, UploadFile
+from pydantic import BaseModel, Field, ValidationError
 
 from src.board.fen_edit import board_grid, set_square_piece, set_turn
 from src.board.game_state import GameState
 from src.board.vision_fen import fen_from_image_bytes
 from src.config import PGN_MAX_PLIES
 from src.council.demos import list_demos
-from src.guardrails import require_admin
+from src.guardrails import is_admin, require_admin, require_owner_id
 from src.library.catalog import list_library
 from src.llm_logger import recent_logs
-from src.orchestrator import ChessMindOrchestrator
-from src.storage import delete_game, get_game, list_games
+from src.sessions import orchestrator, pool
+from src.storage import adopt_orphan_games, delete_game, get_game, list_games
 
 router = APIRouter()
-orchestrator = ChessMindOrchestrator()
 
 
 class MoveRequest(BaseModel):
@@ -81,13 +80,48 @@ class LibraryStepRequest(BaseModel):
     with_analysis: bool = False
 
 
+def _orch(
+    request: Request,
+    response: Response,
+    x_session_id: str | None,
+):
+    sid, orch = pool.resolve(x_session_id)
+    response.headers["X-Session-Id"] = sid
+    owner = (request.headers.get("x-owner-id") or "").strip()
+    if len(owner) >= 8:
+        orch.owner_id = owner
+    return orch
+
+
+def _assert_game_access(request: Request, row: dict) -> None:
+    if is_admin(request):
+        return
+    owner = require_owner_id(request)
+    if (row.get("owner_id") or "") != owner:
+        raise HTTPException(status_code=404, detail="对局不存在")
+
+
 # ── 对弈模式 ──
 
 @router.post("/game/new")
-async def new_game(request: Request):
+async def new_game(
+    request: Request,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
     body = await request.body()
-    req = NewGameRequest.model_validate_json(body) if body.strip() else NewGameRequest()
-    state = orchestrator.new_game(
+    try:
+        req = NewGameRequest.model_validate_json(body) if body.strip() else NewGameRequest()
+    except ValidationError as exc:
+        # errors() 可能含 bytes，不能直接塞进 JSONResponse
+        raise HTTPException(
+            status_code=422,
+            detail=[{"msg": e.get("msg"), "type": e.get("type"), "loc": list(e.get("loc") or ())} for e in exc.errors()],
+        ) from exc
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=f"非法 JSON：{exc}") from exc
+    orch = _orch(request, response, x_session_id)
+    state = orch.new_game(
         mode=req.mode,
         human_color=req.human_color,
         white_ai=req.white_ai,
@@ -100,11 +134,17 @@ async def new_game(request: Request):
 
 
 @router.post("/game/move")
-async def make_move(req: MoveRequest):
-    if orchestrator.mode != "human_vs_human":
-        if orchestrator.current_controller() != "human":
+async def make_move(
+    request: Request,
+    req: MoveRequest,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    orch = _orch(request, response, x_session_id)
+    if orch.mode != "human_vs_human":
+        if orch.current_controller() != "human":
             raise HTTPException(status_code=400, detail="当前不是人类行棋回合")
-    result = await orchestrator.make_move(
+    result = await orch.make_move(
         req.uci,
         with_analysis=req.with_analysis,
         analysis_mode=req.analysis_mode,
@@ -115,72 +155,117 @@ async def make_move(req: MoveRequest):
 
 
 @router.post("/game/ai-step")
-async def ai_step(req: AiStepRequest | None = None):
+async def ai_step(
+    request: Request,
+    response: Response,
+    req: AiStepRequest | None = None,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    orch = _orch(request, response, x_session_id)
     with_analysis = None if req is None else req.with_analysis
-    result = await orchestrator.ai_step(with_analysis=with_analysis)
+    result = await orch.ai_step(with_analysis=with_analysis)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result)
     return result
 
 
 @router.get("/game/state")
-def get_state():
-    return orchestrator.get_state()
+def get_state(
+    request: Request,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    return _orch(request, response, x_session_id).get_state()
 
 
 @router.post("/game/load-fen")
-def load_fen(req: FenRequest):
-    state = orchestrator.load_fen(req.fen)
+def load_fen(
+    request: Request,
+    req: FenRequest,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    state = _orch(request, response, x_session_id).load_fen(req.fen)
     if "error" in state:
         raise HTTPException(status_code=400, detail=state)
     return {"status": "ok", **state}
 
 
 @router.post("/game/analyze-position")
-async def analyze_position(req: AnalyzePositionRequest | None = None):
+async def analyze_position(
+    request: Request,
+    response: Response,
+    req: AnalyzePositionRequest | None = None,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
     """分析当前局面（不走子），用于 Demo / 识谱后 Council。"""
+    orch = _orch(request, response, x_session_id)
     with_analysis = True if req is None else req.with_analysis
-    return await orchestrator.analyze_position(with_analysis=with_analysis)
+    return await orch.analyze_position(with_analysis=with_analysis)
 
 
 @router.post("/game/post-review")
-async def post_game_review():
+async def post_game_review(
+    request: Request,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
     """人人局等：终局后统一生成 Council 评价与复盘。"""
-    result = await orchestrator.post_game_review()
+    result = await _orch(request, response, x_session_id).post_game_review()
     if "error" in result:
         raise HTTPException(status_code=400, detail=result)
     return result
 
 
 @router.post("/game/undo")
-def undo_move():
+def undo_move(
+    request: Request,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
     """悔棋（人 vs AI 尽量回到人类回合）。"""
-    result = orchestrator.undo()
+    result = _orch(request, response, x_session_id).undo()
     if "error" in result:
         raise HTTPException(status_code=400, detail=result)
     return result
 
 
 @router.post("/game/hint")
-async def hint_move():
+async def hint_move(
+    request: Request,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
     """Stockfish 提示着法（不触发 Council）。"""
-    result = await orchestrator.hint()
+    result = await _orch(request, response, x_session_id).hint()
     if "error" in result:
         raise HTTPException(status_code=400, detail=result)
     return result
 
 
 @router.get("/game/review")
-def game_review():
+def game_review(
+    request: Request,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
     """赛后复盘报告（基于本局逐步 Council 缓存）。"""
-    return orchestrator.get_review()
+    return _orch(request, response, x_session_id).get_review()
 
 
 @router.post("/game/save")
-def save_game(req: SaveGameRequest | None = None):
+def save_game(
+    request: Request,
+    response: Response,
+    req: SaveGameRequest | None = None,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    owner = require_owner_id(request)
     title = None if req is None else req.title
     with_review = False if req is None else req.with_review
-    saved = orchestrator.persist_game(title=title, with_review=with_review)
+    saved = _orch(request, response, x_session_id).persist_game(
+        title=title, with_review=with_review, owner_id=owner
+    )
     if "error" in saved:
         raise HTTPException(status_code=400, detail=saved)
     return {"status": "ok", "game": saved}
@@ -212,38 +297,70 @@ def fen_set_turn(req: FenTurnRequest):
     return result
 
 
-# ── 对局历史 ──
+# ── 对局历史（按 owner 隔离；管理员可看全部）──
 
 @router.get("/games")
-def games_list(limit: int = Query(30, ge=1, le=100)):
-    return {"games": list_games(limit)}
+def games_list(
+    request: Request,
+    limit: int = Query(30, ge=1, le=100),
+    adopt_orphans: bool = Query(
+        False,
+        description="仅管理员可用：将无归属历史归属到当前 X-Owner-Id",
+    ),
+):
+    if is_admin(request):
+        adopted = 0
+        if adopt_orphans:
+            owner = (request.headers.get("x-owner-id") or "").strip()
+            if len(owner) >= 8:
+                adopted = adopt_orphan_games(owner)
+        return {"games": list_games(limit), "adopted_orphans": adopted}
+    owner = require_owner_id(request)
+    # 普通用户禁止认领孤儿，避免多用户环境下误占全部无归属记录
+    if adopt_orphans:
+        raise HTTPException(
+            status_code=403,
+            detail="认领无归属历史仅管理员可用（需要 X-Admin-Token）",
+        )
+    return {"games": list_games(limit, owner_id=owner), "adopted_orphans": 0}
 
 
 @router.get("/games/{game_id}")
-def games_get(game_id: str):
+def games_get(game_id: str, request: Request):
     row = get_game(game_id)
     if not row:
         raise HTTPException(status_code=404, detail="对局不存在")
+    _assert_game_access(request, row)
     return row
 
 
 @router.delete("/games/{game_id}")
-def games_delete(game_id: str):
+def games_delete(game_id: str, request: Request):
+    row = get_game(game_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="对局不存在")
+    _assert_game_access(request, row)
     if not delete_game(game_id):
         raise HTTPException(status_code=404, detail="对局不存在")
     return {"status": "ok", "deleted": game_id}
 
 
 @router.post("/games/{game_id}/restore")
-def games_restore(game_id: str):
+def games_restore(
+    game_id: str,
+    request: Request,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
     """恢复历史局面到当前棋盘（不重放逐步分析）。"""
     row = get_game(game_id)
     if not row:
         raise HTTPException(status_code=404, detail="对局不存在")
+    _assert_game_access(request, row)
     fen = row.get("fen_current") or row.get("fen_start")
     if not fen:
         raise HTTPException(status_code=400, detail="该记录无 FEN")
-    state = orchestrator.load_fen(fen)
+    state = _orch(request, response, x_session_id).load_fen(fen)
     if "error" in state:
         raise HTTPException(status_code=400, detail=state)
     return {"status": "ok", "restored_from": game_id, **state}
@@ -257,20 +374,31 @@ def demos():
 
 
 @router.post("/demos/{demo_id}/load")
-def load_demo(demo_id: str):
-    state = orchestrator.load_demo(demo_id)
+def load_demo(
+    demo_id: str,
+    request: Request,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    state = _orch(request, response, x_session_id).load_demo(demo_id)
     if "error" in state:
         raise HTTPException(status_code=404, detail=state)
     return {"status": "ok", **state}
 
 
 @router.post("/demos/{demo_id}/run")
-async def run_demo(demo_id: str):
+async def run_demo(
+    demo_id: str,
+    request: Request,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
     """加载高争议 Demo 并立刻跑 Council（路演一键）。"""
-    state = orchestrator.load_demo(demo_id)
+    orch = _orch(request, response, x_session_id)
+    state = orch.load_demo(demo_id)
     if "error" in state:
         raise HTTPException(status_code=404, detail=state)
-    analysis = await orchestrator.analyze_position(with_analysis=True)
+    analysis = await orch.analyze_position(with_analysis=True)
     return {"status": "ok", "demo": state.get("demo"), "state": state, "analysis": analysis}
 
 
@@ -290,13 +418,20 @@ def challenges_list():
 
 
 @router.post("/library/{item_id}/load")
-def library_load(item_id: str, req: LibraryLoadRequest | None = None):
+def library_load(
+    item_id: str,
+    request: Request,
+    response: Response,
+    req: LibraryLoadRequest | None = None,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    orch = _orch(request, response, x_session_id)
     mode = None if req is None else req.mode
     with_analysis = None if req is None else req.with_analysis
     human_color = None if req is None else req.human_color
     free_play = False if req is None else req.free_play
     engine_depth = None if req is None else req.engine_depth
-    state = orchestrator.load_library(
+    state = orch.load_library(
         item_id,
         mode=mode,
         with_analysis=with_analysis,
@@ -310,9 +445,14 @@ def library_load(item_id: str, req: LibraryLoadRequest | None = None):
 
 
 @router.post("/library/step")
-async def library_step(req: LibraryStepRequest | None = None):
+async def library_step(
+    request: Request,
+    response: Response,
+    req: LibraryStepRequest | None = None,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
     with_analysis = False if req is None else req.with_analysis
-    result = await orchestrator.library_step(with_analysis=with_analysis)
+    result = await _orch(request, response, x_session_id).library_step(with_analysis=with_analysis)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result)
     return result
@@ -322,12 +462,16 @@ async def library_step(req: LibraryStepRequest | None = None):
 
 @router.post("/vision/fen")
 async def vision_fen(
+    request: Request,
+    response: Response,
     file: UploadFile = File(...),
     apply: bool = Query(True, description="识别后是否加载到当前棋局"),
     analyze: bool = Query(False, description="加载后是否立刻跑 Council 分析"),
     side_to_move: str | None = Query(None, description="强制行棋方 w/b/white/black"),
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ):
     """上传棋盘照片/截图 → FEN，并可直接映射到数字棋盘。"""
+    orch = _orch(request, response, x_session_id)
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="空文件")
@@ -337,7 +481,7 @@ async def vision_fen(
     result = await fen_from_image_bytes(
         raw,
         filename=file.filename,
-        client=orchestrator.llm_client,
+        client=orch.llm_client,
         side_to_move=side_to_move,
     )
     if not result.get("ok"):
@@ -346,11 +490,11 @@ async def vision_fen(
     state = None
     analysis = None
     if apply:
-        state = orchestrator.load_fen(result["fen"])
+        state = orch.load_fen(result["fen"])
         if "error" in state:
             raise HTTPException(status_code=400, detail=state)
         if analyze:
-            analysis = await orchestrator.analyze_position(with_analysis=True)
+            analysis = await orch.analyze_position(with_analysis=True)
 
     return {"status": "ok", "vision": result, "state": state, "analysis": analysis}
 
@@ -374,6 +518,7 @@ async def health(
         "product": state.get("product", "ChessCouncil"),
         "llm_ping": "not_requested",
         "public_ready": True,
+        "sessions": "header",
     }
 
 
@@ -384,7 +529,13 @@ def logs_recent(request: Request, limit: int = Query(20, ge=1, le=200)):
 
 
 @router.post("/analyze/pgn")
-async def analyze_pgn(req: PGNRequest):
+async def analyze_pgn(
+    request: Request,
+    req: PGNRequest,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    orch = _orch(request, response, x_session_id)
     game = chess.pgn.read_game(StringIO(req.pgn))
     moves = list(game.mainline_moves()) if game is not None else []
     if game is None or not moves:
@@ -398,7 +549,7 @@ async def analyze_pgn(req: PGNRequest):
     replay = GameState(board=game.board())
     results = []
     for move in moves:
-        analysis = await orchestrator.analyze_move(replay, move.uci())
+        analysis = await orch.analyze_move(replay, move.uci())
         if not analysis or "error" in analysis:
             break
         results.append(analysis)

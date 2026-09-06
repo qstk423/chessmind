@@ -41,11 +41,8 @@ AnalysisMode = Literal["fast", "deep"]
 class ChessMindOrchestrator:
     """项目总控：管理棋局、引擎、Council Agent 协作"""
 
-    def __init__(self):
+    def __init__(self, *, share: "ChessMindOrchestrator | None" = None):
         self.game = GameState()
-        self.evaluator = MoveEvaluator()
-        self._connected = False
-
         self.mode: GameMode = "human_vs_human"
         self.human_color: Literal["white", "black"] = "white"
         self.white_ai: Literal["llm", "engine"] = "llm"
@@ -65,13 +62,31 @@ class ChessMindOrchestrator:
         self.library_moves: list[str] = []
         self.library_index: int = 0
         self.library_meta: dict | None = None
+        self.session_id: str | None = None
+        self.owner_id: str | None = None
+        self._owns_engine = share is None
 
+        if share is not None:
+            # 会话隔离：复用引擎与 Agent，仅盘面/模式独立
+            self.evaluator = share.evaluator
+            self._connected = share._connected
+            self.llm_client = share.llm_client
+            self.tactical = share.tactical
+            self.strategic = share.strategic
+            self.risk = share.risk
+            self.coach = share.coach
+            self.arbiter = share.arbiter
+            self.move_picker = share.move_picker
+            self._council_sem = share._council_sem
+            return
+
+        self.evaluator = MoveEvaluator()
+        self._connected = False
         self.llm_client = (
             AsyncOpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
             if LLM_ENABLED
             else None
         )
-
         self.tactical = TacticalAgent(self.llm_client, LLM_MODEL)
         self.strategic = StrategicAgent(self.llm_client, LLM_MODEL)
         self.risk = RiskAgent(self.llm_client, LLM_MODEL)
@@ -89,6 +104,8 @@ class ChessMindOrchestrator:
                 print(f"[ChessCouncil] Stockfish 未连接（降级启动）: {err}")
 
     def close(self):
+        if not self._owns_engine:
+            return
         self.evaluator.close()
         self._connected = False
 
@@ -221,7 +238,13 @@ class ChessMindOrchestrator:
         result["book_move"] = True
         return result
 
-    def persist_game(self, *, title: str | None = None, with_review: bool = False) -> dict:
+    def persist_game(
+        self,
+        *,
+        title: str | None = None,
+        with_review: bool = False,
+        owner_id: str | None = None,
+    ) -> dict:
         """写入 SQLite；终局或显式保存时调用。"""
         if not self.game_id:
             return {"error": "无当前对局"}
@@ -238,6 +261,7 @@ class ChessMindOrchestrator:
             pgn=self.game.to_pgn(),
             move_count=self.game.move_count,
             review=review,
+            owner_id=owner_id if owner_id is not None else self.owner_id,
             meta={
                 "human_color": self.human_color,
                 "white_ai": self.white_ai,
@@ -841,6 +865,7 @@ class ChessMindOrchestrator:
             "analysis_mode": self.analysis_mode,
             "coach_level": self.coach_level,
             "game_id": self.game_id,
+            "session_id": self.session_id,
             "turn": "white" if self.game.board.turn == chess.WHITE else "black",
             "controller": (
                 None if self.game.is_game_over else self.current_controller()

@@ -21,7 +21,7 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-html, body { min-height: 100%; }
+html, body { min-height: 100%; height: 100%; }
 
 body {
   font-family: var(--font-ui);
@@ -525,7 +525,6 @@ button.ghost:hover {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 10px;
-  max-height: min(52vh, 520px);
   overflow: auto;
 }
 .challenge-item {
@@ -611,16 +610,66 @@ button.ghost:hover {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 10px;
-  max-height: min(52vh, 520px);
   overflow: auto;
   padding: 2px;
   align-content: start;
+}
+
+/* 学习页：列表区域占满顶栏到底栏之间，内部滚动（避免 PC 大屏中间空白） */
+body.page-learn {
+  height: 100%;
+  overflow: hidden;
+}
+body.page-learn .app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-height: 100dvh;
+  max-width: min(960px, 100%);
+  box-sizing: border-box;
+  overflow: hidden;
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+}
+body.page-learn #learn-library,
+body.page-learn #learn-challenge {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+body.page-learn #learn-library[hidden],
+body.page-learn #learn-challenge[hidden] {
+  display: none !important;
+}
+body.page-learn .library-list,
+body.page-learn .challenge-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  padding-bottom: 8px;
+  align-content: start;
+  align-items: stretch;
+}
+body.page-learn .lib-item,
+body.page-learn .challenge-item {
+  min-height: auto;
+}
+body.page-learn .lib-item .blurb {
+  flex: 0 1 auto;
+}
+@media (min-width: 720px) {
+  body.page-learn .library-list,
+  body.page-learn .challenge-list {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
 }
 .lib-item {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 0;
+  min-height: auto;
   flex-shrink: 0;
   padding: 12px 12px 10px;
   border: 1px solid rgba(210, 176, 106, 0.22);
@@ -705,8 +754,9 @@ button.ghost:hover {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 240px;
+  max-height: min(42vh, 360px);
   overflow: auto;
+  margin-top: 8px;
 }
 .log-item {
   padding: 8px 10px;
@@ -1975,5 +2025,16 @@ button.ghost:hover {
   .council-footer button,
   .council-footer .field {
     width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

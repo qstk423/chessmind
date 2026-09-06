@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,17 +12,16 @@ from typing import Any
 from src.config import LLM_LOG_PATH, LLM_MODEL
 
 _lock = threading.Lock()
-_game_id: str | None = None
-_move_number: int | None = None
+_game_id: ContextVar[str | None] = ContextVar("llm_game_id", default=None)
+_move_number: ContextVar[int | None] = ContextVar("llm_move_number", default=None)
 
 
 def set_context(*, game_id: str | None = None, move_number: int | None = None) -> None:
-    """绑定当前对局上下文，写入后续 LLM 日志。"""
-    global _game_id, _move_number
+    """绑定当前对局上下文（按异步/任务隔离，避免多用户串局）。"""
     if game_id is not None:
-        _game_id = game_id
+        _game_id.set(game_id)
     if move_number is not None:
-        _move_number = move_number
+        _move_number.set(move_number)
 
 
 def new_game_id() -> str:
@@ -53,8 +53,8 @@ def log_llm_call(
 
     record: dict[str, Any] = {
         "ts": datetime.now(timezone.utc).isoformat(),
-        "game_id": _game_id,
-        "move_number": _move_number,
+        "game_id": _game_id.get(),
+        "move_number": _move_number.get(),
         "agent": agent,
         "model": model or LLM_MODEL,
         "success": success,
