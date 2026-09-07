@@ -8,6 +8,7 @@ from openai import AsyncOpenAI
 
 from src.agents.schema import AgentOpinion, fallback_opinion, opinion_from_raw
 from src.config import LLM_ENABLED, LLM_TIMEOUT_SEC
+from src.llm_client import chat_completion, message_text
 from src.llm_logger import log_llm_call
 
 
@@ -51,7 +52,8 @@ class BaseAgent:
         t0 = time.perf_counter()
         try:
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
+                chat_completion(
+                    self.client,
                     model=self.model,
                     messages=[
                         {"role": "system", "content": self.role_prompt},
@@ -73,7 +75,7 @@ class BaseAgent:
                 completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
                 total_tokens=getattr(usage, "total_tokens", None) if usage else None,
             )
-            raw = response.choices[0].message.content or ""
+            raw = message_text(response.choices[0].message)
             return opinion_from_raw(self.agent_id, raw)
         except Exception as e:
             latency_ms = (time.perf_counter() - t0) * 1000
@@ -106,7 +108,8 @@ class BaseAgent:
         t0 = time.perf_counter()
         try:
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
+                chat_completion(
+                    self.client,
                     model=self.model,
                     messages=[
                         {"role": "system", "content": system},
@@ -128,7 +131,7 @@ class BaseAgent:
                 completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
                 total_tokens=getattr(usage, "total_tokens", None) if usage else None,
             )
-            return response.choices[0].message.content or ""
+            return message_text(response.choices[0].message)
         except Exception as e:
             latency_ms = (time.perf_counter() - t0) * 1000
             log_llm_call(

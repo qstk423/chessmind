@@ -39,7 +39,7 @@ class MoveRequest(BaseModel):
 class NewGameRequest(BaseModel):
     mode: Literal["human_vs_human", "human_vs_ai", "ai_vs_ai"] = "human_vs_human"
     human_color: Literal["white", "black"] = "white"
-    white_ai: Literal["llm", "engine"] = "llm"
+    white_ai: Literal["llm", "qwen", "engine"] = "llm"
     engine_depth: int | None = Field(default=None, ge=1, le=25)
     with_analysis: bool = True
     analysis_mode: Literal["fast", "deep"] = "fast"
@@ -535,6 +535,12 @@ async def health(
         "stockfish_error": getattr(orchestrator.evaluator, "_connect_error", None),
         "llm_enabled": state["llm_enabled"],
         "llm_model": state["llm_model"],
+        "qwen_enabled": state.get("qwen_enabled", False),
+        "qwen_model": state.get("qwen_model"),
+        "ai_vs_ai": (
+            f"{state['llm_model'] if state['llm_enabled'] else 'off'} vs "
+            f"{state.get('qwen_model') if state.get('qwen_enabled') else 'Stockfish'}"
+        ),
         "mode": state["mode"],
         "game_id": state["game_id"],
         "product": state.get("product", "ChessCouncil"),

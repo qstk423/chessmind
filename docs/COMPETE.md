@@ -80,13 +80,14 @@ macOS：**QuickTime Player → 文件 → 新建屏幕录制**（选浏览器窗
 编辑 `.env`（不要提交真实 Key）：
 
 ```ini
-LLM_API_KEY=<天津移动>
-LLM_BASE_URL=<天津移动兼容 OpenAI 的地址>
+LLM_API_KEY=<智谱或天津移动下发的 Key>
+LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 LLM_MODEL=glm-5.1
-VISION_MODEL=<官方视觉模型；暂无则继续用 qwen-vl-plus 仅开发演示>
+LLM_THINKING=disabled
+VISION_MODEL=glm-4v-plus
 ```
 
-重启服务后顶栏 pill 应显示 `glm-5.1`。开发期可用千问（`qwen-plus`），**提交 / 决赛现场以 glm-5.1 为准**。
+重启服务后顶栏 pill 应显示 `glm-5.1`。人机对局 AI 与 AI vs AI 的大模型方均走该模型。
 
 ## 风险预案
 

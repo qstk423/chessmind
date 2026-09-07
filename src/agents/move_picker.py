@@ -8,10 +8,11 @@ import time
 
 from openai import AsyncOpenAI
 
-from src.config import LLM_ENABLED, LLM_TIMEOUT_SEC
+from src.config import LLM_TIMEOUT_SEC
+from src.llm_client import chat_completion, message_text
 from src.llm_logger import log_llm_call
 
-MOVE_PICKER_PROMPT = """你是国际象棋对弈 AI。你必须从给定的合法着法列表中选择一步棋。
+MOVE_PICKER_PROMPT = """你是国际象棋对弈 AI（模型：GLM）。你必须从给定的合法着法列表中选择一步棋。
 
 硬性规则：
 1. 只能输出列表中已有的 UCI 着法（例如 e2e4、e7e8q）
@@ -24,7 +25,7 @@ reason 用中文，不超过 20 字。"""
 
 
 class MovePickerAgent:
-    """用 LLM 从合法着法中选一步；失败时由调用方回退引擎。"""
+    """用 LLM（默认 glm-5.1）从合法着法中选一步；失败时由调用方回退引擎。"""
 
     def __init__(self, client: AsyncOpenAI | None, model: str):
         self.name = "选着Agent"
@@ -45,8 +46,8 @@ class MovePickerAgent:
         if not legal_moves:
             return {"uci": None, "reason": "无合法着法", "source": "unavailable"}
 
-        if not LLM_ENABLED or self.client is None:
-            return {"uci": None, "reason": "未配置 LLM", "source": "unavailable"}
+        if self.client is None:
+            return {"uci": None, "reason": "未配置该侧模型", "source": "unavailable"}
 
         history_text = " ".join(move_history[-12:]) if move_history else "开局"
         # 合法着法过多时截断提示（但仍要求从完整列表选——实际上传全量）
@@ -64,20 +65,21 @@ class MovePickerAgent:
         t0 = time.perf_counter()
         try:
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
+                chat_completion(
+                    self.client,
                     model=self.model,
                     messages=[
                         {"role": "system", "content": MOVE_PICKER_PROMPT},
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.3,
-                    max_tokens=80,
+                    max_tokens=120,
                 ),
                 timeout=LLM_TIMEOUT_SEC,
             )
             latency_ms = (time.perf_counter() - t0) * 1000
             usage = getattr(response, "usage", None)
-            raw = (response.choices[0].message.content or "").strip()
+            raw = message_text(response.choices[0].message)
             log_llm_call(
                 agent=self.name,
                 model=self.model,

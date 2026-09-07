@@ -2,7 +2,12 @@
 
 **多智能体辩论式棋类分析与对战系统 —— 国际象棋 + 中国象棋，同一产品壳。**
 
-ChessCouncil 把「算得清楚」和「说得明白」拆开：服务端负责规则、引擎与理事会（Council），Web 客户端负责棋盘交互与结果呈现。国际象棋侧用 [Stockfish](https://stockfishchess.org/) + 三师 LLM Council；中国象棋侧用内建规则引擎 + 启发式 Council。顶栏一键切换棋种（对弈↔对弈、学习↔学习），记住上次选择——**不是**双卡片门户页。
+ChessCouncil 把「算得清楚」和「说得明白」拆开：服务端负责规则、引擎与理事会（Council），Web 客户端负责棋盘交互与结果呈现。
+
+- **国际象棋**：Stockfish 评估 + **glm-5.1** Council；人机选着走 glm-5.1（非法着回退 Stockfish）；**AI vs AI = glm-5.1 vs 千问（qwen-plus）**
+- **中国象棋**：可选 [Pikafish](https://github.com/official-pikafish/Pikafish) 走子（未安装则内建搜索 + 开局库）+ 启发式 Council；将军提示、赛后复盘折线（上红/白优、下黑优）
+
+顶栏一键切换棋种（对弈↔对弈、学习↔学习），记住上次选择——**不是**双卡片门户页。
 
 | | |
 |---|---|
@@ -18,15 +23,16 @@ ChessCouncil 把「算得清楚」和「说得明白」拆开：服务端负责�
 
 | 层级 | 职责 | 当前实现 |
 |------|------|----------|
-| Brain（服务端） | 两套规则引擎、Stockfish（国际象棋）、Council、对局 / 房间 / 学习库 | Python · FastAPI **单进程** |
+| Brain（服务端） | 两套规则引擎、Stockfish / Pikafish、双模型选着、Council、对局 / 房间 / 学习库 | Python · FastAPI **单进程** |
 | Client（客户端） | `/chess/` · `/xiangqi/` 分壳；顶栏棋种切换；四页导航 | 手机优先 Web / PWA |
 
 入口 `/` 按 `localStorage.cc_variant` 瞬时跳转到上次棋种（默认国际象棋）。
 
 **它包含：**
 
-- 双棋种对弈：人机 / 人人；（国际象棋）另有 AI vs AI
-- Council 分析：国际象棋为战术 / 战略 / 风险并行 + 分歧辩论；中国象棋为同结构启发式 MVP
+- 双棋种对弈：人机 / 人人；（国际象棋）**AI vs AI：GLM-5.1 ↔ 千问**
+- Council 分析：国际象棋为战术 / 战略 / 风险并行 + 分歧辩论（glm-5.1）；中国象棋为同结构启发式 MVP
+- 中国象棋：Pikafish 可选强力引擎、被将军棋盘提示、赛后复盘曲线分色
 - 名局 / 残局 / 战术学习与残局闯关
 - WebSocket 联机房间（同网演示级）
 - 国际象棋：拍照识谱、对局历史、PGN、路演 Demo
@@ -81,9 +87,10 @@ ChessCouncil 把「算得清楚」和「说得明白」拆开：服务端负责�
 | 模块 | 完成度 | 说明 |
 |------|--------|------|
 | 双棋种壳 | ~88% | 同进程双 API + 顶栏切换 + 排版对齐；规则引擎未统一 |
-| 对弈 | ~90% | 新局、走子、悔棋、提示；`X-Session-Id` 隔离 |
-| Council（国际象棋） | ~85% | 三师并行 + 辩论 / 仲裁；日志 ContextVar 防串局 |
-| Council（中国象棋） | ~70% | 启发式分析 MVP |
+| 对弈 | ~92% | 新局、走子、悔棋、提示；国际象棋 AI vs AI（GLM↔千问）；`X-Session-Id` 隔离 |
+| Council（国际象棋） | ~85% | 三师并行 + 辩论 / 仲裁（默认 glm-5.1）；日志 ContextVar 防串局 |
+| Council（中国象棋） | ~72% | 启发式分析 MVP + 复盘曲线 |
+| 象棋引擎 | ~85% | 可选 Pikafish；否则内建搜索 + 开局库 |
 | 学习 / 闯关 | ~78% | 名局 / 残局 / 战术 + 闯关；进度在本机 |
 | 联机 | ~70% | WebSocket 房间；进程内状态，适合同网演示 |
 | 工具 / 识谱 / 历史 | ~75% | 识谱与 SQLite 历史主要在国际象棋侧 |
@@ -105,7 +112,7 @@ ChessCouncil 把「算得清楚」和「说得明白」拆开：服务端负责�
 
 ### 对弈
 
-- 人 vs AI / 人人 /（国际象棋）AI vs AI
+- 人 vs AI / 人人 /（国际象棋）AI vs AI（默认白 GLM-5.1 · 黑千问）
 - 快评 / 深评 Council；着法列表与回放；悔棋 / 提示
 - 浏览器会话隔离：请求携带 `X-Session-Id`
 
@@ -140,7 +147,9 @@ ChessCouncil 把「算得清楚」和「说得明白」拆开：服务端负责�
 
 - Python ≥ 3.10
 - [Stockfish](https://stockfishchess.org/)（推荐 `brew install stockfish` / `apt install stockfish`；**仅国际象棋需要**）
-- 可选：OpenAI 兼容 `LLM_API_KEY`（大赛可用 `glm-5.1`，日常可用千问等）
+- 可选：[Pikafish](https://github.com/official-pikafish/Pikafish)（`./scripts/build_pikafish.sh`；中国象棋强力走子）
+- 可选：智谱 `LLM_API_KEY`（默认 `glm-5.1`，评论席 + 人机/AI 对决一方）
+- 可选：百炼 `QWEN_API_KEY`（默认 `qwen-plus`，AI vs AI 另一方；未配置则该侧回退 Stockfish）
 
 ### 本地运行
 
@@ -150,8 +159,8 @@ cd chessmind
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env               # 填写 LLM_* ；可选 STOCKFISH_PATH
-chmod +x scripts/run_dev.sh scripts/smoke.sh
+cp .env.example .env               # 填写 LLM_* / QWEN_* ；可选 STOCKFISH_PATH
+chmod +x scripts/run_dev.sh scripts/smoke.sh scripts/build_pikafish.sh
 ./scripts/run_dev.sh               # 或: python -m src.main
 ```
 
@@ -186,11 +195,17 @@ pytest -q tests/test_api_smoke.py tests/xiangqi/
 ### 关键配置
 
 ```ini
-LLM_API_KEY=sk-xxxx
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_MODEL=qwen-plus
-VISION_MODEL=qwen-vl-plus
+LLM_API_KEY=你的智谱或大赛Key
+LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+LLM_MODEL=glm-5.1
+LLM_THINKING=disabled
+VISION_MODEL=glm-4v-plus
+# AI vs AI 第二方（千问 / 百炼）
+QWEN_API_KEY=你的百炼Key
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_MODEL=qwen-plus
 STOCKFISH_PATH=stockfish
+# PIKAFISH_PATH=engines/Pikafish/src/pikafish
 HOST=0.0.0.0
 PORT=8000
 PUBLIC_DEMO=1
@@ -208,12 +223,13 @@ CORS_ORIGINS=https://your.domain
 ```
 src/
 ├── main.py                 # FastAPI 入口（双棋种挂载）
-├── orchestrator.py         # 国际象棋对局 + Council 编排
+├── llm_client.py           # GLM / 千问 OpenAI 兼容封装
+├── orchestrator.py         # 国际象棋对局 + Council + 双模型选着
 ├── sessions.py · rooms.py  # 会话池 / 联机房间（国际象棋）
 ├── guardrails.py           # 限流 / admin / owner（双前缀归一）
 ├── api/                    # 国际象棋 HTTP / WebSocket
 ├── board/ · agents/ · council/ · library/
-└── xiangqi/                # 中国象棋规则 / AI / Council / 房间 / API
+└── xiangqi/                # 规则 / AI / Pikafish / Council / 复盘 / 房间 / API
 frontend/
 ├── index.html              # 瞬时跳转入口
 ├── shared/                 # 棋种切换脚本与样式
@@ -222,7 +238,7 @@ frontend/
 tests/
 ├── test_api_smoke.py       # 国际象棋 + 双前缀冒烟
 └── xiangqi/                # 规则 / 谜题 / 联机回归
-scripts/                    # run_dev · smoke · export_openapi
+scripts/                    # run_dev · smoke · build_pikafish · export_openapi
 docs/                       # COMPETE.md · openapi.json · pitch/
 ```
 
@@ -277,13 +293,16 @@ docs/                       # COMPETE.md · openapi.json · pitch/
 - 学习 / 闯关 / 联机 / 识谱
 - 会话隔离、历史归属、自动存档、日志 ContextVar
 - **双棋种同进程：顶栏切换 + 排版对齐（方案 A）**
+- **glm-5.1 + 千问 AI vs AI；象棋可选 Pikafish；复盘曲线分色 / 将军提示**
 
 **下一步**
 
 1. 公网 HTTPS、IP 级硬限流与更严 CSP  
-2. 象棋侧更强引擎（如 [Pikafish](https://github.com/official-pikafish/Pikafish)）可选接入  
-3. 真账号体系（在签名访客之上）  
-4. 可选原生壳：换壳不换脑，仍走本仓库 API  
+2. 真账号体系（在签名访客之上）  
+3. 可选原生壳：换壳不换脑，仍走本仓库 API  
+4. 中国象棋 Council 接入大模型（与国际象棋同构）
+
+本地象棋强力引擎：先 `./scripts/build_pikafish.sh`，服务会自动探测 `engines/Pikafish/src/pikafish`；也可设 `PIKAFISH_PATH`。未安装时降级到内建搜索 + 开局库。
 
 ---
 
@@ -293,7 +312,7 @@ docs/                       # COMPETE.md · openapi.json · pitch/
 |------|------|
 | [Xiangqi Council](https://github.com/qstk423/Xiang-qi-gaming) | 已并入本仓；原仓库可作归档对照 |
 | [Stockfish](https://github.com/official-stockfish/Stockfish) | 国际象棋 UCI 引擎 |
-| [Pikafish](https://github.com/official-pikafish/Pikafish) | 象棋侧目标引擎（可选后续接入） |
+| [Pikafish](https://github.com/official-pikafish/Pikafish) | 象棋侧 UCI 引擎（可选；本机 `./scripts/build_pikafish.sh`） |
 
 ---
 

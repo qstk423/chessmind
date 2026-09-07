@@ -84,13 +84,22 @@ def _parse_square(sq: str) -> tuple[int, int]:
 def health():
     from src.xiangqi.rooms import room_manager
 
+    engine_info = {"available": False}
+    try:
+        from src.xiangqi.engine import pikafish_status
+
+        engine_info = pikafish_status()
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "product": "ChessCouncil",
         "variant": "xiangqi",
-        "version": "0.3.2",
-        "engine": "builtin_minimax",
-        "council": "heuristic_v1",
+        "version": "0.3.3",
+        "engine": "pikafish" if engine_info.get("available") else "builtin_minimax_v2",
+        "pikafish": engine_info,
+        "council": "heuristic_v2",
         "rules": "mvp_mate_stalemate_threefold_perpetual_check",
         "sessions": "header",
         "session_pool": sessions.stats(),
@@ -114,6 +123,7 @@ def capabilities():
             "fen_tools",
             "online_rooms",
             "council_analyze",
+            "post_review",
             "session_isolation",
             "threefold_draw",
             "perpetual_check_loss",
@@ -178,18 +188,33 @@ def undo_move(
 @router.post("/game/ai-step")
 def ai_step(
     response: Response,
-    depth: int = 2,
+    depth: int | None = None,
+    strength: str = "normal",
     x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ):
     sid, game = _sid(x_session_id, response)
     if game.result:
         raise HTTPException(400, "对局已结束")
-    depth = max(1, min(3, depth))
-    uci = choose_move(game, depth=depth)
+    level = (strength or "normal").strip().lower()
+    if level not in ("easy", "normal", "hard"):
+        level = "normal"
+    # 兼容旧 depth 参数
+    kwargs: dict = {"strength": level}
+    if depth is not None:
+        kwargs["depth"] = max(1, min(5, int(depth)))
+    uci = choose_move(game, **kwargs)
     if not uci:
         raise HTTPException(400, "无合法着法")
     entry = game.play_uci(uci)
-    return _state(game, sid, last_move=entry, ai=True)
+    state = _state(game, sid, last_move=entry, ai=True)
+    try:
+        from src.xiangqi.engine import pikafish_status
+
+        state["ai_engine"] = pikafish_status()
+    except Exception:
+        state["ai_engine"] = {"available": False}
+    state["ai_strength"] = level
+    return state
 
 
 @router.post("/game/targets")
@@ -246,6 +271,42 @@ def analyze_pos(
         "state": _state(game, sid),
         "council": council,
         "analysis": {"council": council},
+    }
+
+
+@router.get("/game/review")
+def game_review(
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    from src.xiangqi.review import build_review
+
+    sid, game = _sid(x_session_id, response)
+    review = build_review(game)
+    return {"session_id": sid, **review}
+
+
+@router.post("/game/post-review")
+def post_game_review(
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    """终局结算后一键：局面分析 + 复盘报告。"""
+    from src.xiangqi.review import build_review
+
+    sid, game = _sid(x_session_id, response)
+    council = None
+    try:
+        council = analyze_position(game)
+    except Exception:  # noqa: BLE001
+        council = None
+    review = build_review(game)
+    return {
+        "session_id": sid,
+        "state": _state(game, sid),
+        "council": council,
+        "analysis": {"council": council} if council else None,
+        "review": review,
     }
 
 

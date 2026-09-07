@@ -19,3 +19,9 @@ docs/pitch/evidence/
 
 # SQLite 对局库
 data/
+
+# 本机编译的象棋引擎（GPLv3，勿提交二进制/NNUE）
+engines/Pikafish/
+engines/pikafish
+bin/pikafish
+*.nnue

@@ -157,3 +157,21 @@ def test_ai_playback_has_separate_session_rate_bucket():
     # 旧实现 40/min 会截断较快的自动对局。
     for _ in range(100):
         check_rate_limit(req)
+
+
+def test_post_review_after_mate():
+    h = {"X-Session-Id": "xq-review-mate"}
+    assert client.post("/api/xiangqi/puzzles/mate_rook_a0d0/load", headers=h).status_code == 200
+    move = client.post("/api/xiangqi/game/move", json={"uci": "a0d0"}, headers=h)
+    assert move.status_code == 200
+    assert move.json().get("is_game_over") is True
+    rev = client.get("/api/xiangqi/game/review", headers=h)
+    assert rev.status_code == 200
+    body = rev.json()
+    assert "绝杀" in (body.get("result") or "")
+    assert body.get("total_moves") >= 1
+    assert isinstance(body.get("eval_curve"), list)
+    post = client.post("/api/xiangqi/game/post-review", headers=h)
+    assert post.status_code == 200
+    assert post.json().get("review", {}).get("title")
+    assert post.json().get("council", {}).get("move_class") == "终局"

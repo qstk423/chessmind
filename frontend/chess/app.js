@@ -1210,7 +1210,11 @@ function updateStatus() {
     return;
   }
   const ctrl = serverState.controller;
-  const ctrlLabel = ctrl === 'llm' ? 'LLM' : ctrl === 'engine' ? 'Stockfish' : ctrl === 'human' ? '人类' : '';
+  const ctrlLabel =
+    ctrl === 'llm' ? 'GLM' :
+    ctrl === 'qwen' ? '千问' :
+    ctrl === 'engine' ? 'Stockfish' :
+    ctrl === 'human' ? '人类' : '';
   $('#game-status').text(ctrlLabel ? `${turn}走棋（${ctrlLabel}）` : `${turn}走棋`);
 }
 
@@ -1235,6 +1239,12 @@ function refreshModeControls() {
     councilField.removeAttr('hidden');
     analysisModeField.removeAttr('hidden');
     $('#with-analysis').prop('disabled', false);
+    const pair = $('#white-ai').val();
+    const tip =
+      pair === 'qwen' ? 'AI vs AI：千问（白） vs GLM-5.1（黑）' :
+      pair === 'engine' ? 'AI vs AI：Stockfish（白） vs GLM-5.1（黑）' :
+      'AI vs AI：GLM-5.1（白） vs 千问（黑）';
+    $('#ai-meta').text(tip);
   } else {
     // 人人局：对局中不实时 Council，终局统一生成
     humanField.attr('hidden', true);
@@ -1511,6 +1521,10 @@ $('#game-mode').change(() => {
   refreshModeControls();
   savePrefs();
 });
+$('#white-ai').change(() => {
+  refreshModeControls();
+  savePrefs();
+});
 $('#human-color, #with-analysis, #analysis-mode, #coach-level').on('change', savePrefs);
 
 $('#btn-review').click(async () => {
@@ -1569,6 +1583,80 @@ function renderAccuracyCard(acc) {
     </div>`;
 }
 
+/** 按零线切开折线：上半（正优势）与下半（负优势）分色。 */
+function splitEvalLineByZero(curve, xScale, yScale) {
+  const zeroY = yScale(0);
+  const upSegs = [];
+  const dnSegs = [];
+  let cur = [];
+  let curSide = null;
+  const pt = (x, y) => `${Number(x).toFixed(1)},${Number(y).toFixed(1)}`;
+  const flush = () => {
+    if (cur.length >= 2) {
+      if (curSide === 'up') upSegs.push(cur.join(' '));
+      else if (curSide === 'down') dnSegs.push(cur.join(' '));
+    }
+    cur = [];
+    curSide = null;
+  };
+
+  for (let i = 0; i < curve.length; i += 1) {
+    const v = Number(curve[i].advantage) || 0;
+    const x = xScale(i);
+    const y = yScale(v);
+    const side = v > 0 ? 'up' : v < 0 ? 'down' : null;
+
+    if (i === 0) {
+      if (side) {
+        cur = [pt(x, y)];
+        curSide = side;
+      }
+      continue;
+    }
+
+    const pv = Number(curve[i - 1].advantage) || 0;
+    const px = xScale(i - 1);
+    const py = yScale(pv);
+    const pside = pv > 0 ? 'up' : pv < 0 ? 'down' : null;
+
+    if (pside && side && pside !== side) {
+      const t = Math.abs(pv) / (Math.abs(pv) + Math.abs(v) || 1);
+      const zx = px + (x - px) * t;
+      if (!cur.length) cur = [pt(px, py)];
+      cur.push(pt(zx, zeroY));
+      curSide = pside;
+      flush();
+      cur = [pt(zx, zeroY), pt(x, y)];
+      curSide = side;
+      continue;
+    }
+    if (!pside && side) {
+      flush();
+      cur = [pt(px, zeroY), pt(x, y)];
+      curSide = side;
+      continue;
+    }
+    if (pside && !side) {
+      if (!cur.length) cur = [pt(px, py)];
+      cur.push(pt(x, zeroY));
+      curSide = pside;
+      flush();
+      continue;
+    }
+    if (!pside && !side) {
+      flush();
+      continue;
+    }
+    if (!cur.length) {
+      cur = [pt(px, py)];
+      curSide = side;
+    }
+    cur.push(pt(x, y));
+  }
+  flush();
+  return { upSegs, dnSegs, zeroY };
+}
+
 function renderEvalCurveChart(curve) {
   if (!curve || curve.length < 2) {
     return `<div class="eval-curve-empty">本局尚无逐步胜率曲线（终局复盘后生成）</div>`;
@@ -1582,47 +1670,61 @@ function renderEvalCurveChart(curve) {
   const maxAbs = Math.max(20, ...curve.map((p) => Math.abs(Number(p.advantage) || 0)));
   const yScale = (adv) => pad.t + plotH / 2 - (Number(adv) / maxAbs) * (plotH / 2);
   const xScale = (i) => pad.l + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-  const pts = curve.map((p, i) => `${xScale(i).toFixed(1)},${yScale(p.advantage).toFixed(1)}`);
-  const line = pts.join(' ');
-  const zeroY = yScale(0);
-  // 零线上下分区填充
-  const areaWhite = [`${xScale(0)},${zeroY}`, ...pts, `${xScale(n - 1)},${zeroY}`].join(' ');
+  const { upSegs, dnSegs, zeroY } = splitEvalLineByZero(curve, xScale, yScale);
+  const uid = `ec${Math.random().toString(36).slice(2, 8)}`;
   const last = curve[curve.length - 1];
   const tip = last.advantage >= 0
     ? `终局白方优势 +${Math.abs(last.advantage).toFixed(1)}%`
     : `终局黑方优势 +${Math.abs(last.advantage).toFixed(1)}%`;
 
+  const upLines = upSegs.map((pts) =>
+    `<polyline class="eval-line eval-line-up" points="${pts}" fill="none"/>`
+  ).join('');
+  const dnLines = dnSegs.map((pts) =>
+    `<polyline class="eval-line eval-line-down" points="${pts}" fill="none"/>`
+  ).join('');
+
   const dots = curve.map((p, i) => {
     const cx = xScale(i);
     const cy = yScale(p.advantage);
+    const side = (Number(p.advantage) || 0) >= 0 ? 'up' : 'down';
     const title = `第${p.ply}步 ${p.san || ''} · 白 ${p.white_win}% / 黑 ${p.black_win}%（点击跳转）`;
     const fenAttr = p.fen ? ` data-fen="${escapeHtml(p.fen)}"` : '';
-    return `<circle class="eval-dot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4.5" data-ply="${escapeHtml(String(p.ply))}" data-san="${escapeHtml(p.san || '')}" data-adv="${escapeHtml(String(p.advantage))}"${fenAttr} style="cursor:pointer"><title>${escapeHtml(title)}</title></circle>`;
+    return `<circle class="eval-dot eval-dot-${side}" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4.5" data-ply="${escapeHtml(String(p.ply))}" data-san="${escapeHtml(p.san || '')}" data-adv="${escapeHtml(String(p.advantage))}"${fenAttr} style="cursor:pointer"><title>${escapeHtml(title)}</title></circle>`;
   }).join('');
+
+  const upperH = Math.max(0, zeroY - pad.t);
+  const lowerH = Math.max(0, pad.t + plotH - zeroY);
 
   return `
     <div class="eval-curve-panel">
       <div class="eval-curve-head">
         <strong>胜率走势</strong>
-        <span>关键节点连线 · 点圆点跳转局面 · ${escapeHtml(tip)}</span>
+        <span>上=白优 · 下=黑优 · 点圆点跳转 · ${escapeHtml(tip)}</span>
       </div>
-      <svg class="eval-curve-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="白黑胜率折线图">
+      <div class="eval-curve-legend" aria-hidden="true">
+        <span class="leg-up">白方优势</span>
+        <span class="leg-down">黑方优势</span>
+      </div>
+      <svg class="eval-curve-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="白黑胜率折线图，上方白优下方黑优">
         <defs>
-          <linearGradient id="evalFillWhite" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(239,231,216,0.35)"/>
-            <stop offset="100%" stop-color="rgba(239,231,216,0)"/>
+          <linearGradient id="${uid}-up" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(239,231,216,0.42)"/>
+            <stop offset="100%" stop-color="rgba(239,231,216,0.06)"/>
           </linearGradient>
-          <linearGradient id="evalFillBlack" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0%" stop-color="rgba(107,124,116,0.4)"/>
-            <stop offset="100%" stop-color="rgba(107,124,116,0)"/>
+          <linearGradient id="${uid}-dn" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(74, 110, 92, 0.08)"/>
+            <stop offset="100%" stop-color="rgba(74, 110, 92, 0.45)"/>
           </linearGradient>
         </defs>
         <rect x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}" class="eval-plot-bg"/>
+        <rect class="eval-band-up" x="${pad.l}" y="${pad.t}" width="${plotW}" height="${upperH}" fill="url(#${uid}-up)"/>
+        <rect class="eval-band-down" x="${pad.l}" y="${zeroY}" width="${plotW}" height="${lowerH}" fill="url(#${uid}-dn)"/>
         <line x1="${pad.l}" y1="${zeroY}" x2="${W - pad.r}" y2="${zeroY}" class="eval-zero"/>
-        <text x="${pad.l - 8}" y="${pad.t + 10}" class="eval-axis-label" text-anchor="end">白</text>
-        <text x="${pad.l - 8}" y="${pad.t + plotH}" class="eval-axis-label" text-anchor="end">黑</text>
-        <polyline class="eval-area-guide" points="${areaWhite}" fill="url(#evalFillWhite)" stroke="none"/>
-        <polyline class="eval-line" points="${line}" fill="none"/>
+        <text x="${pad.l - 8}" y="${pad.t + 10}" class="eval-axis-label eval-axis-up" text-anchor="end">白</text>
+        <text x="${pad.l - 8}" y="${pad.t + plotH}" class="eval-axis-label eval-axis-down" text-anchor="end">黑</text>
+        ${upLines}
+        ${dnLines}
         ${dots}
         <text x="${pad.l}" y="${H - 8}" class="eval-axis-label">开局</text>
         <text x="${W - pad.r}" y="${H - 8}" class="eval-axis-label" text-anchor="end">第${escapeHtml(String(last.ply))}步</text>

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=13">
   <link rel="stylesheet" href="/shared/variant-switch.css">
 </head>
 <body class="page-play" data-page="play">
@@ -45,6 +45,14 @@
             <option value="black">黑</option>
           </select>
         </label>
+        <label class="field">
+          <span>难度</span>
+          <select id="ai-strength">
+            <option value="easy">入门</option>
+            <option value="normal" selected>普通</option>
+            <option value="hard">强</option>
+          </select>
+        </label>
         <label class="field check">
           <input type="checkbox" id="with-analysis" checked>
           <span>Council</span>
@@ -71,6 +79,10 @@
 
       <div class="board-frame">
         <canvas id="xiangqi-board" width="810" height="900" aria-label="中国象棋棋盘"></canvas>
+        <div class="board-tip" id="board-tip" hidden role="status" aria-live="polite">
+          <strong id="board-tip-title">被将军了</strong>
+          <span id="board-tip-body">走这一步会送死，必须先应将。</span>
+        </div>
       </div>
 
       <div class="player-row">
@@ -159,10 +171,15 @@
       <div class="tab-content" id="tab-debate" hidden><p class="placeholder">辩论</p></div>
 
       <div class="council-footer">
+        <button id="btn-review" type="button">赛后复盘</button>
         <button class="accent" id="btn-analyze" type="button">分析局面</button>
         <button id="btn-play-verdict" type="button" disabled>走出推荐</button>
       </div>
-      <p class="council-hint" id="council-note">评估条 · 三师推荐 · 标签页 · 争议辩论（启发式）。</p>
+      <details class="tool-block review-inline" id="review-section" hidden>
+        <summary>复盘报告</summary>
+        <div id="review-result"></div>
+      </details>
+      <p class="council-hint" id="council-note">评估条 · 三师推荐 · 标签页 · 争议辩论 · 赛后复盘。</p>
     </aside>
   </div>
 </div>
@@ -174,7 +191,29 @@
   <a class="tabbar-item" href="tools.html">工具</a>
 </nav>
 
+<div id="finale-overlay" class="finale-overlay" hidden aria-hidden="true">
+  <div class="finale-backdrop"></div>
+  <div class="finale-stage" data-mate="checkmate">
+    <div class="finale-fx" aria-hidden="true">
+      <span class="fx-ring"></span>
+      <span class="fx-ring fx-ring-2"></span>
+      <span class="fx-seal"></span>
+      <span class="fx-beam fx-beam-a"></span>
+      <span class="fx-beam fx-beam-b"></span>
+    </div>
+    <p class="finale-kicker" id="finale-kicker">对局结束</p>
+    <h2 class="finale-title" id="finale-title">绝杀！</h2>
+    <p class="finale-sub" id="finale-sub">Mate</p>
+    <p class="finale-blurb" id="finale-blurb"></p>
+    <div class="finale-actions">
+      <button type="button" id="finale-review" class="accent">看复盘</button>
+      <button type="button" id="finale-close">继续</button>
+      <button type="button" id="finale-new">再来一局</button>
+    </div>
+  </div>
+</div>
+
 <script src="/shared/variant-switch.js"></script>
-<script src="app.js?v=12"></script>
+  <script src="app.js?v=17"></script>
 </body>
 </html>

@@ -27,6 +27,10 @@ let highlights = [];
 let lastMove = null;
 let flipped = false;
 let busy = false;
+let inCheck = false;
+let isGameOver = false;
+let gameResult = '';
+let boardTipTimer = null;
 let mode = 'human_vs_human';
 let humanColor = 'red';
 let online = { active: false, roomId: null, token: null, color: null, ws: null };
@@ -36,6 +40,7 @@ let libraryScript = null;
 let challengeState = { active: false, id: null, level: null, title: '', goal: '', humanColor: 'red' };
 let activePuzzleId = null;
 let cursorSquare = { row: 9, col: 4 };
+let lastFinaleKey = null;
 const CHALLENGE_STORAGE_KEY = 'xq_challenge_cleared_v1';
 
 function getClearedChallenges() {
@@ -228,6 +233,10 @@ function setStatus(state) {
       resultBanner.hidden = true;
     }
   }
+  inCheck = !!state.in_check && !state.is_game_over;
+  isGameOver = !!state.is_game_over;
+  gameResult = state.result || '';
+  if (!inCheck || isGameOver) hideBoardTip();
   const list = document.getElementById('move-list');
   const count = document.getElementById('move-count');
   if (count) count.textContent = `${state.move_count || 0} 着`;
@@ -238,6 +247,45 @@ function setStatus(state) {
       : '<li class="placeholder">尚无着法</li>';
     list.scrollTop = list.scrollHeight;
   }
+}
+
+function needsCheckResolveTip() {
+  // 困毙 / 已终局不弹「被将军」说明；仅活局面被将军时提示
+  if (isGameOver) return false;
+  if ((gameResult || '').includes('困毙')) return false;
+  return inCheck;
+}
+
+function hideBoardTip() {
+  if (boardTipTimer) {
+    clearTimeout(boardTipTimer);
+    boardTipTimer = null;
+  }
+  const tip = document.getElementById('board-tip');
+  if (tip) tip.hidden = true;
+}
+
+function showBoardTip(title, body, { holdMs = 2600 } = {}) {
+  if (!needsCheckResolveTip()) return;
+  const tip = document.getElementById('board-tip');
+  const titleEl = document.getElementById('board-tip-title');
+  const bodyEl = document.getElementById('board-tip-body');
+  if (!tip) return;
+  if (titleEl) titleEl.textContent = title;
+  if (bodyEl) bodyEl.textContent = body;
+  tip.hidden = false;
+  if (boardTipTimer) clearTimeout(boardTipTimer);
+  boardTipTimer = setTimeout(() => {
+    tip.hidden = true;
+    boardTipTimer = null;
+  }, holdMs);
+}
+
+function warnIllegalUnderCheck(uci) {
+  if (!needsCheckResolveTip()) return false;
+  if (uci && legalUci.includes(uci)) return false;
+  showBoardTip('被将军了', '走这一步会送死，必须先应将。');
+  return true;
 }
 
 function applyState(state) {
@@ -254,7 +302,288 @@ function applyState(state) {
   renderBoard();
   updateScriptBar(state.library);
   maybeClearChallenge(state);
+  maybeShowFinale(state);
   return state;
+}
+
+function inferFinale(state) {
+  const result = state?.result || '';
+  if (!state?.is_game_over && !result) return null;
+  if (result.includes('和棋')) {
+    return {
+      id: 'draw',
+      title: '和棋',
+      subtitle: 'Draw',
+      blurb: result,
+      winner: null,
+    };
+  }
+  const winner = result.includes('黑') ? 'black' : result.includes('红') ? 'red' : null;
+  if (result.includes('绝杀')) {
+    return { id: 'checkmate', title: '绝杀！', subtitle: 'Mate', blurb: result, winner };
+  }
+  if (result.includes('困毙')) {
+    return { id: 'trapped', title: '困毙！', subtitle: 'No Legal Move', blurb: result, winner };
+  }
+  if (result.includes('长将')) {
+    return { id: 'perpetual', title: '长将负', subtitle: 'Perpetual Check', blurb: result, winner };
+  }
+  return {
+    id: 'checkmate',
+    title: '对局结束',
+    subtitle: 'Game Over',
+    blurb: result || '终局',
+    winner,
+  };
+}
+
+function hideFinale() {
+  const overlay = document.getElementById('finale-overlay');
+  if (!overlay) return;
+  overlay.hidden = true;
+  overlay.setAttribute('aria-hidden', 'true');
+  document.querySelector('.board-frame')?.classList.remove('finale-pulse');
+}
+
+function showFinale(finale) {
+  if (!finale) return;
+  const overlay = document.getElementById('finale-overlay');
+  const stage = document.querySelector('#finale-overlay .finale-stage');
+  if (!overlay || !stage) return;
+  const winnerLabel = finale.winner === 'red' ? '红方胜' : finale.winner === 'black' ? '黑方胜' : '和棋';
+  stage.setAttribute('data-mate', finale.id || 'checkmate');
+  const kicker = document.getElementById('finale-kicker');
+  const title = document.getElementById('finale-title');
+  const sub = document.getElementById('finale-sub');
+  const blurb = document.getElementById('finale-blurb');
+  if (kicker) kicker.textContent = winnerLabel;
+  if (title) title.textContent = finale.title || '绝杀！';
+  if (sub) sub.textContent = finale.subtitle || '';
+  if (blurb) blurb.textContent = finale.blurb || '';
+  document.querySelector('.board-frame')?.classList.add('finale-pulse');
+  stage.style.animation = 'none';
+  // eslint-disable-next-line no-unused-expressions
+  stage.offsetHeight;
+  stage.style.animation = '';
+  overlay.hidden = false;
+  overlay.setAttribute('aria-hidden', 'false');
+  const meta = document.querySelector('.ai-meta');
+  if (meta) meta.textContent = `${finale.title || '终局'} · ${winnerLabel}`;
+}
+
+function maybeShowFinale(state) {
+  if (!state?.is_game_over || !state.result) {
+    lastFinaleKey = null;
+    return;
+  }
+  if (state.result === lastFinaleKey) return;
+  lastFinaleKey = state.result;
+  showFinale(inferFinale(state));
+}
+
+function renderAccuracyCard(acc) {
+  if (!acc || acc.overall == null) {
+    return `<div class="accuracy-empty">暂无准确率（启发式需有足够着法）</div>`;
+  }
+  const ring = Math.max(0, Math.min(100, acc.overall));
+  const red = acc.red != null ? `${acc.red}%` : '—';
+  const black = acc.black != null ? `${acc.black}%` : '—';
+  return `
+    <div class="accuracy-panel">
+      <div class="accuracy-score" aria-label="总准确率 ${ring}%">
+        <span class="accuracy-num">${ring}</span>
+        <span class="accuracy-unit">%</span>
+      </div>
+      <div class="accuracy-copy">
+        <strong>准确率</strong>
+        <span>红方 ${escapeHtml(String(red))} · 黑方 ${escapeHtml(String(black))}</span>
+        <span class="accuracy-note">${escapeHtml(acc.note || '')}</span>
+      </div>
+    </div>`;
+}
+
+/** 按零线切开折线：上半（正优势）与下半（负优势）分色。 */
+function splitEvalLineByZero(curve, xScale, yScale) {
+  const zeroY = yScale(0);
+  const upSegs = [];
+  const dnSegs = [];
+  let cur = [];
+  let curSide = null;
+  const pt = (x, y) => `${Number(x).toFixed(1)},${Number(y).toFixed(1)}`;
+  const flush = () => {
+    if (cur.length >= 2) {
+      if (curSide === 'up') upSegs.push(cur.join(' '));
+      else if (curSide === 'down') dnSegs.push(cur.join(' '));
+    }
+    cur = [];
+    curSide = null;
+  };
+
+  for (let i = 0; i < curve.length; i += 1) {
+    const v = Number(curve[i].advantage) || 0;
+    const x = xScale(i);
+    const y = yScale(v);
+    const side = v > 0 ? 'up' : v < 0 ? 'down' : null;
+
+    if (i === 0) {
+      if (side) {
+        cur = [pt(x, y)];
+        curSide = side;
+      }
+      continue;
+    }
+
+    const pv = Number(curve[i - 1].advantage) || 0;
+    const px = xScale(i - 1);
+    const py = yScale(pv);
+    const pside = pv > 0 ? 'up' : pv < 0 ? 'down' : null;
+
+    if (pside && side && pside !== side) {
+      const t = Math.abs(pv) / (Math.abs(pv) + Math.abs(v) || 1);
+      const zx = px + (x - px) * t;
+      if (!cur.length) cur = [pt(px, py)];
+      cur.push(pt(zx, zeroY));
+      curSide = pside;
+      flush();
+      cur = [pt(zx, zeroY), pt(x, y)];
+      curSide = side;
+      continue;
+    }
+    if (!pside && side) {
+      flush();
+      cur = [pt(px, zeroY), pt(x, y)];
+      curSide = side;
+      continue;
+    }
+    if (pside && !side) {
+      if (!cur.length) cur = [pt(px, py)];
+      cur.push(pt(x, zeroY));
+      curSide = pside;
+      flush();
+      continue;
+    }
+    if (!pside && !side) {
+      flush();
+      continue;
+    }
+    if (!cur.length) {
+      cur = [pt(px, py)];
+      curSide = side;
+    }
+    cur.push(pt(x, y));
+  }
+  flush();
+  return { upSegs, dnSegs, zeroY };
+}
+
+function renderEvalCurveChart(curve) {
+  if (!curve || curve.length < 2) {
+    return `<div class="eval-curve-empty">本局尚无逐步胜率曲线</div>`;
+  }
+  const W = 640;
+  const H = 220;
+  const pad = { l: 44, r: 16, t: 18, b: 28 };
+  const plotW = W - pad.l - pad.r;
+  const plotH = H - pad.t - pad.b;
+  const n = curve.length;
+  const maxAbs = Math.max(20, ...curve.map((p) => Math.abs(Number(p.advantage) || 0)));
+  const yScale = (adv) => pad.t + plotH / 2 - (Number(adv) / maxAbs) * (plotH / 2);
+  const xScale = (i) => pad.l + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const { upSegs, dnSegs, zeroY } = splitEvalLineByZero(curve, xScale, yScale);
+  const uid = `ec${Math.random().toString(36).slice(2, 8)}`;
+  const last = curve[curve.length - 1];
+  const tip = last.advantage >= 0
+    ? `终局红方优势 +${Math.abs(last.advantage).toFixed(1)}%`
+    : `终局黑方优势 +${Math.abs(last.advantage).toFixed(1)}%`;
+
+  const upLines = upSegs.map((pts) =>
+    `<polyline class="eval-line eval-line-up" points="${pts}" fill="none"/>`
+  ).join('');
+  const dnLines = dnSegs.map((pts) =>
+    `<polyline class="eval-line eval-line-down" points="${pts}" fill="none"/>`
+  ).join('');
+
+  const dots = curve.map((p, i) => {
+    const cx = xScale(i);
+    const cy = yScale(p.advantage);
+    const side = (Number(p.advantage) || 0) >= 0 ? 'up' : 'down';
+    const title = `第${p.ply}步 ${p.san || ''} · 红 ${p.red_win}% / 黑 ${p.black_win}%`;
+    return `<circle class="eval-dot eval-dot-${side}" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4.5"><title>${escapeHtml(title)}</title></circle>`;
+  }).join('');
+
+  const upperH = Math.max(0, zeroY - pad.t);
+  const lowerH = Math.max(0, pad.t + plotH - zeroY);
+
+  return `
+    <div class="eval-curve-panel">
+      <div class="eval-curve-head">
+        <strong>胜率走势</strong>
+        <span>上=红优 · 下=黑优 · ${escapeHtml(tip)}</span>
+      </div>
+      <div class="eval-curve-legend" aria-hidden="true">
+        <span class="leg-up">红方优势</span>
+        <span class="leg-down">黑方优势</span>
+      </div>
+      <svg class="eval-curve-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="红黑胜率折线图，上方红优下方黑优">
+        <defs>
+          <linearGradient id="${uid}-up" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(196, 74, 58, 0.38)"/>
+            <stop offset="100%" stop-color="rgba(196, 74, 58, 0.05)"/>
+          </linearGradient>
+          <linearGradient id="${uid}-dn" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(100, 116, 132, 0.08)"/>
+            <stop offset="100%" stop-color="rgba(100, 116, 132, 0.42)"/>
+          </linearGradient>
+        </defs>
+        <rect x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}" class="eval-plot-bg"/>
+        <rect class="eval-band-up" x="${pad.l}" y="${pad.t}" width="${plotW}" height="${upperH}" fill="url(#${uid}-up)"/>
+        <rect class="eval-band-down" x="${pad.l}" y="${zeroY}" width="${plotW}" height="${lowerH}" fill="url(#${uid}-dn)"/>
+        <line x1="${pad.l}" y1="${zeroY}" x2="${W - pad.r}" y2="${zeroY}" class="eval-zero"/>
+        <text x="${pad.l - 8}" y="${pad.t + 10}" class="eval-axis-label eval-axis-up" text-anchor="end">红</text>
+        <text x="${pad.l - 8}" y="${pad.t + plotH}" class="eval-axis-label eval-axis-down" text-anchor="end">黑</text>
+        ${upLines}
+        ${dnLines}
+        ${dots}
+        <text x="${pad.l}" y="${H - 8}" class="eval-axis-label">开局</text>
+        <text x="${W - pad.r}" y="${H - 8}" class="eval-axis-label" text-anchor="end">第${escapeHtml(String(last.ply))}步</text>
+      </svg>
+    </div>`;
+}
+
+async function showReviewFromData(data) {
+  if (!data) return;
+  const narr = (data.narrative || []).map((t) => `<li>${escapeHtml(t)}</li>`).join('');
+  const highs = (data.highlights || []).map((h) =>
+    `<li>第${escapeHtml(String(h.number))}步 ${escapeHtml(h.color || '')} ${escapeHtml(h.san)} · ${escapeHtml(h.classification)}${h.note ? ` · ${escapeHtml(h.note)}` : ''}</li>`
+  ).join('');
+  const section = document.getElementById('review-section');
+  const box = document.getElementById('review-result');
+  if (!section || !box) return;
+  section.hidden = false;
+  section.open = true;
+  box.innerHTML = `
+    <div class="review-block">
+      <p><strong>${escapeHtml(data.title || '复盘')}</strong> · 共 ${escapeHtml(String(data.total_moves || 0))} 着 · ${escapeHtml(data.result || '')}</p>
+      ${renderAccuracyCard(data.accuracy)}
+      ${renderEvalCurveChart(data.eval_curve || [])}
+      <p><strong>叙事</strong></p><ul>${narr || '<li>暂无</li>'}</ul>
+      <p><strong>关键局面</strong></p><ul>${highs || '<li>暂无</li>'}</ul>
+      <pre class="review-pgn">${escapeHtml(data.pgn || '')}</pre>
+    </div>`;
+  section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function runPostReview() {
+  const data = await api('/game/post-review', { method: 'POST' });
+  if (data.council) applyCouncil(data.council);
+  await showReviewFromData(data.review || data);
+  return data;
+}
+
+async function runReviewOnly() {
+  const data = await api('/game/review');
+  await showReviewFromData(data);
+  return data;
 }
 
 function updateScriptBar(library) {
@@ -422,6 +751,10 @@ async function activateCursorSquare() {
       selected = point;
       rebuildHighlights();
       renderBoard();
+      return;
+    }
+    if (needsCheckResolveTip()) {
+      showBoardTip('被将军了', '请先应将，不能随便点别处。');
     }
     return;
   }
@@ -432,8 +765,20 @@ async function activateCursorSquare() {
     return;
   }
   const uci = `${squareCode(selected.row, selected.col)}${squareCode(point.row, point.col)}`;
+  if (!legalUci.includes(uci)) {
+    if (warnIllegalUnderCheck(uci)) {
+      rebuildHighlights();
+      renderBoard();
+      return;
+    }
+    selected = null;
+    highlights = [];
+    renderBoard();
+    return;
+  }
   selected = null;
   highlights = [];
+  hideBoardTip();
   renderBoard();
   await playMove(uci);
 }
@@ -536,7 +881,13 @@ function applyCouncil(council) {
   if (redProb) redProb.textContent = `红 ${red}%`;
   if (blackProb) blackProb.textContent = `黑 ${black}%`;
   const moveClass = document.getElementById('move-class');
-  if (moveClass) moveClass.textContent = council?.move_class || ev.label || '已分析';
+  if (moveClass) {
+    const threat = council?.eval?.threat;
+    const label = council?.move_class || ev.label || '已分析';
+    moveClass.textContent = label;
+    moveClass.classList.toggle('is-mate-threat', threat === 'mate1_red' || threat === 'mate1_black');
+    moveClass.classList.toggle('is-check-threat', (threat || '').startsWith('check_'));
+  }
   const status = document.getElementById('council-status');
   if (status) status.textContent = council?.debate?.triggered ? '辩论中' : '已出牌';
 
@@ -624,6 +975,18 @@ function wireCouncilUi() {
     if (!verdictUci) return;
     await playMove(verdictUci);
   });
+  document.getElementById('btn-review')?.addEventListener('click', () => {
+    runReviewOnly().catch((e) => alert(e.message || '复盘失败'));
+  });
+  document.getElementById('finale-close')?.addEventListener('click', () => hideFinale());
+  document.getElementById('finale-new')?.addEventListener('click', () => {
+    hideFinale();
+    newGame().catch((e) => alert(e.message));
+  });
+  document.getElementById('finale-review')?.addEventListener('click', () => {
+    hideFinale();
+    runPostReview().catch((e) => alert(e.message || '复盘失败'));
+  });
 }
 
 async function maybeAnalyzeAfterMove() {
@@ -680,12 +1043,16 @@ async function leaveOnline() {
   await newGame();
 }
 
+function aiStrength() {
+  return document.getElementById('ai-strength')?.value || 'normal';
+}
+
 async function maybeAiReply(state) {
   if (mode !== 'human_vs_ai' || state.is_game_over || online.active) return;
   if (state.turn === humanColor) return;
   busy = true;
   try {
-    const next = await api('/game/ai-step?depth=2', { method: 'POST' });
+    const next = await api(`/game/ai-step?strength=${encodeURIComponent(aiStrength())}`, { method: 'POST' });
     applyState(next);
     await maybeAnalyzeAfterMove();
   } catch (err) {
@@ -697,6 +1064,14 @@ async function maybeAiReply(state) {
 
 async function newGame() {
   clearStudyState();
+  hideFinale();
+  lastFinaleKey = null;
+  const section = document.getElementById('review-section');
+  if (section) {
+    section.hidden = true;
+    const box = document.getElementById('review-result');
+    if (box) box.innerHTML = '';
+  }
   if (online.active) {
     await resetOnlineRoom();
     return;
@@ -761,7 +1136,12 @@ async function playMove(uci) {
     await maybeAnalyzeAfterMove();
     await maybeAiReply(state);
   } catch (err) {
-    alert(err.message);
+    const msg = err?.message || String(err);
+    if (needsCheckResolveTip() && /非法/.test(msg)) {
+      showBoardTip('被将军了', '走这一步会送死，必须先应将。');
+    } else {
+      alert(msg);
+    }
   } finally {
     busy = false;
   }
@@ -805,6 +1185,10 @@ async function onBoardClick(event) {
       selected = point;
       rebuildHighlights();
       renderBoard();
+      return;
+    }
+    if (needsCheckResolveTip()) {
+      showBoardTip('被将军了', '请先应将，不能随便点别处。');
     }
     return;
   }
@@ -815,8 +1199,20 @@ async function onBoardClick(event) {
     return;
   }
   const uci = `${squareCode(selected.row, selected.col)}${squareCode(point.row, point.col)}`;
+  if (!legalUci.includes(uci)) {
+    if (warnIllegalUnderCheck(uci)) {
+      rebuildHighlights();
+      renderBoard();
+      return;
+    }
+    selected = null;
+    highlights = [];
+    renderBoard();
+    return;
+  }
   selected = null;
   highlights = [];
+  hideBoardTip();
   renderBoard();
   await playMove(uci);
 }
@@ -849,7 +1245,7 @@ async function bootPlay() {
     if (online.active) return alert('联机中请双方自行走子');
     if (studyLocked()) return alert('残局/闯关请自己走出正解，不能让 AI 代走');
     try {
-      const next = await api('/game/ai-step?depth=2', { method: 'POST' });
+      const next = await api(`/game/ai-step?strength=${encodeURIComponent(aiStrength())}`, { method: 'POST' });
       applyState(next);
       await maybeAnalyzeAfterMove();
       await maybeAiReply(next);

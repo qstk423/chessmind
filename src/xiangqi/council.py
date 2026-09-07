@@ -201,45 +201,246 @@ def _pick_agent(game: XiangqiGame, persona: str, depth_hint: int = 1) -> dict[st
     }
 
 
+def _find_king(board, color: str) -> tuple[int, int] | None:
+    target = "K" if color == "red" else "k"
+    for r in range(10):
+        for c in range(9):
+            if board[r][c] == target:
+                return r, c
+    return None
+
+
+def _mate_in_one(game: XiangqiGame, color: str) -> bool:
+    """当前若轮到 color，是否存在一步绝杀。"""
+    if game.result or game.turn != color:
+        return False
+    for mv in legal_moves(game.board, color):
+        game.play_uci(mv.uci)
+        result = game.result or ""
+        game.undo()
+        if "绝杀" not in result:
+            continue
+        if color == "red" and "红方胜" in result:
+            return True
+        if color == "black" and "黑方胜" in result:
+            return True
+    return False
+
+
+def _checking_moves_count(game: XiangqiGame, color: str) -> int:
+    if game.turn != color:
+        return 0
+    n = 0
+    enemy = "black" if color == "red" else "red"
+    for mv in legal_moves(game.board, color):
+        game.play_uci(mv.uci)
+        if in_check(game.board, enemy) or (game.result and "绝杀" in (game.result or "")):
+            n += 1
+        game.undo()
+    return n
+
+
+def _escape_count_when_in_check(game: XiangqiGame) -> int | None:
+    """若当前行棋方被将，返回应将着法数；否则 None。"""
+    if game.result or not in_check(game.board, game.turn):
+        return None
+    return len(legal_moves(game.board, game.turn))
+
+
+def _attack_pressure(game: XiangqiGame, attacker: str) -> int:
+    """进攻方对对方将/帅宫的压力分。"""
+    defender = "black" if attacker == "red" else "red"
+    king = _find_king(game.board, defender)
+    if not king:
+        return 0
+    kr, kc = king
+    pressure = 0
+    # 对方将军
+    if in_check(game.board, defender):
+        pressure += 120
+    # 攻击方子靠近九宫 / 瞄准将位
+    for r in range(10):
+        for c in range(9):
+            p = game.board[r][c]
+            if color_of(p) != attacker or not p or p.lower() == "k":
+                continue
+            dist = abs(r - kr) + abs(c - kc)
+            kind = p.lower()
+            if kind in ("r", "c"):
+                pressure += max(0, 18 - dist * 2)
+            elif kind == "n":
+                pressure += max(0, 14 - dist * 2)
+            elif kind == "p":
+                # 过河兵贴近
+                crossed = (r <= 4) if attacker == "red" else (r >= 5)
+                if crossed:
+                    pressure += max(0, 10 - dist)
+    # 双车双炮类：同线/同列重炮
+    files: dict[int, int] = {}
+    ranks: dict[int, int] = {}
+    for r in range(10):
+        for c in range(9):
+            p = game.board[r][c]
+            if color_of(p) != attacker:
+                continue
+            if p and p.lower() in ("r", "c"):
+                files[c] = files.get(c, 0) + 1
+                ranks[r] = ranks.get(r, 0) + 1
+    for cnt in list(files.values()) + list(ranks.values()):
+        if cnt >= 2:
+            pressure += 35 * (cnt - 1)
+    return pressure
+
+
 def _eval_probs(game: XiangqiGame) -> dict[str, Any]:
+    """胜率估计：绝杀/应将/杀棋威胁优先，子力其次。"""
+    if game.result:
+        if "红方胜" in game.result:
+            return {
+                "red_pct": 100,
+                "black_pct": 0,
+                "material": evaluate_material(game.board),
+                "label": "红胜定局",
+                "threat": "terminal",
+            }
+        if "黑方胜" in game.result:
+            return {
+                "red_pct": 0,
+                "black_pct": 100,
+                "material": evaluate_material(game.board),
+                "label": "黑胜定局",
+                "threat": "terminal",
+            }
+        return {
+            "red_pct": 50,
+            "black_pct": 50,
+            "material": evaluate_material(game.board),
+            "label": "和棋",
+            "threat": "draw",
+        }
+
     mat = evaluate_material(game.board)
-    # 映射到红方胜率观感
-    raw = 50 + max(-40, min(40, mat / 40))
-    if in_check(game.board, "black"):
-        raw += 4
-    if in_check(game.board, "red"):
-        raw -= 4
-    red = max(8, min(92, raw))
-    black = 100 - red
+    # 子力只做底座，绝杀威胁可以把它打穿
+    raw = 50.0 + max(-28.0, min(28.0, mat / 55.0))
+
+    red_mate1 = _mate_in_one(game, "red")
+    black_mate1 = _mate_in_one(game, "black")
+    threat = "none"
     label = "均势"
-    if red >= 62:
-        label = "红优"
-    elif red <= 38:
-        label = "黑优"
-    elif abs(red - 50) < 6:
-        label = "均势"
+
+    if red_mate1:
+        raw = 97.0
+        threat = "mate1_red"
+        label = "红方绝杀在即"
+    elif black_mate1:
+        raw = 3.0
+        threat = "mate1_black"
+        label = "黑方绝杀在即"
     else:
-        label = "略优·红" if red > 50 else "略优·黑"
+        escapes = _escape_count_when_in_check(game)
+        if escapes is not None:
+            # 被将：逃路越少，进攻方胜率越高
+            if game.turn == "red":
+                # 红被将 → 黑优
+                raw -= 22 + max(0, 8 - escapes) * 6
+                threat = "check_red"
+                label = "红方应将"
+            else:
+                raw += 22 + max(0, 8 - escapes) * 6
+                threat = "check_black"
+                label = "黑方应将"
+
+        red_checks = _checking_moves_count(game, "red")
+        black_checks = _checking_moves_count(game, "black")
+        if red_checks:
+            raw += min(18, 6 + red_checks * 3)
+        if black_checks:
+            raw -= min(18, 6 + black_checks * 3)
+
+        red_p = _attack_pressure(game, "red")
+        black_p = _attack_pressure(game, "black")
+        raw += max(-22, min(22, (red_p - black_p) / 8.0))
+
+        # 双炮/重子压制时抬高标签敏感度
+        if threat == "none":
+            if raw >= 78:
+                label = "红方胜势"
+            elif raw >= 65:
+                label = "红优"
+            elif raw <= 22:
+                label = "黑方胜势"
+            elif raw <= 35:
+                label = "黑优"
+            elif abs(raw - 50) < 6:
+                label = "均势"
+            else:
+                label = "略优·红" if raw > 50 else "略优·黑"
+            if red_p - black_p >= 80 and raw >= 60:
+                label = "红方攻势"
+                threat = "attack_red"
+            elif black_p - red_p >= 80 and raw <= 40:
+                label = "黑方攻势"
+                threat = "attack_black"
+
+    red = int(round(max(1, min(99, raw))))
+    if red_mate1:
+        red = 97
+    if black_mate1:
+        red = 3
+    black = 100 - red
     return {
-        "red_pct": round(red),
-        "black_pct": round(black),
+        "red_pct": red,
+        "black_pct": black,
         "material": mat,
         "label": label,
+        "threat": threat,
     }
+
 
 
 def analyze_position(game: XiangqiGame) -> dict[str, Any]:
     if game.result:
+        ev = _eval_probs(game)
+        summary = game.result
+        takeaway = "对局已结束，可点「赛后复盘」看走势与关键着。"
+        if "绝杀" in summary:
+            takeaway = "绝杀成立：对方无应将之路。建议复盘回看最后几步。"
+        elif "困毙" in summary:
+            takeaway = "困毙判负：无子可动方负。复盘时可核对是否还有漏算着法。"
+        elif "长将" in summary:
+            takeaway = "长将判负：连续将军循环，长将方负。"
+        elif "和棋" in summary:
+            takeaway = "重复局面和棋。可复盘查看循环片段。"
+        coach = {
+            "role": "coach",
+            "title": "教练",
+            "recommended_move": "—",
+            "uci": None,
+            "san": "—",
+            "confidence": 1.0,
+            "risk": "low",
+            "evaluation": 0,
+            "summary": summary,
+            "reasoning_points": [summary, takeaway],
+            "concerns": [],
+            "parse_ok": True,
+            "takeaway": takeaway,
+        }
         return {
             "fen": game.fen(),
             "turn": game.turn,
-            "eval": _eval_probs(game),
-            "agents": {},
+            "eval": ev,
+            "agents": {
+                "coach": coach,
+                "tactical": {**coach, "role": "tactical", "title": "攻杀", "summary": "终局，无继续攻杀。"},
+                "strategic": {**coach, "role": "strategic", "title": "局势", "summary": "终局，局势已定。"},
+                "risk": {**coach, "role": "risk", "title": "风险", "summary": "终局，风险项关闭。"},
+            },
             "disagreement": {"disagreement_score": 0, "badge": "终局", "recommended_moves": {}},
             "debate": {"triggered": False, "rounds": []},
             "verdict": {
                 "recommended_move": "—",
-                "summary": game.result,
+                "summary": summary,
                 "confidence": 1.0,
             },
             "move_class": "终局",
@@ -328,13 +529,13 @@ def analyze_position(game: XiangqiGame) -> dict[str, Any]:
     }
 
     ev = _eval_probs(game)
-    move_class = "待走"
-    if in_check(game.board, game.turn):
+    move_class = ev.get("label") or "待走"
+    if ev.get("threat") in ("mate1_red", "mate1_black"):
+        move_class = ev["label"]
+    elif in_check(game.board, game.turn):
         move_class = "应将"
     elif score >= 0.7:
         move_class = "分歧局"
-    else:
-        move_class = ev["label"]
 
     return {
         "fen": game.fen(),

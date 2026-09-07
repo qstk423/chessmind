@@ -5,7 +5,6 @@ import asyncio
 from typing import Literal
 
 import chess
-from openai import AsyncOpenAI
 
 from src.agents.coach import CoachAgent, CoachLevel
 from src.agents.move_picker import MovePickerAgent
@@ -20,22 +19,27 @@ from src.config import (
     AI_ENGINE_DEPTH,
     COACH_LEVEL,
     DEBATE_THRESHOLD,
-    LLM_API_KEY,
     LLM_BASE_URL,
     LLM_ENABLED,
     LLM_MAX_CONCURRENT,
     LLM_MODEL,
+    QWEN_BASE_URL,
+    QWEN_ENABLED,
+    QWEN_MODEL,
 )
 from src.council.debate import ArbiterAgent, consensus_verdict, run_debate
 from src.council.demos import get_demo, list_demos
 from src.council.disagreement import compute_disagreement
 from src.council.review import build_review
 from src.library.catalog import get_library_item, list_library
+from src.llm_client import chat_completion, make_llm_client, make_qwen_client, message_text
 from src.llm_logger import new_game_id, set_context
 from src.storage import upsert_game
 
 GameMode = Literal["human_vs_human", "human_vs_ai", "ai_vs_ai"]
 AnalysisMode = Literal["fast", "deep"]
+AiController = Literal["human", "llm", "qwen", "engine"]
+WhiteAi = Literal["llm", "qwen", "engine"]
 
 
 class ChessMindOrchestrator:
@@ -45,7 +49,7 @@ class ChessMindOrchestrator:
         self.game = GameState()
         self.mode: GameMode = "human_vs_human"
         self.human_color: Literal["white", "black"] = "white"
-        self.white_ai: Literal["llm", "engine"] = "llm"
+        self.white_ai: WhiteAi = "llm"
         self.engine_depth: int = AI_ENGINE_DEPTH
         self.game_id: str | None = None
         self.with_analysis: bool = True
@@ -71,28 +75,28 @@ class ChessMindOrchestrator:
             self.evaluator = share.evaluator
             self._connected = share._connected
             self.llm_client = share.llm_client
+            self.qwen_client = share.qwen_client
             self.tactical = share.tactical
             self.strategic = share.strategic
             self.risk = share.risk
             self.coach = share.coach
             self.arbiter = share.arbiter
             self.move_picker = share.move_picker
+            self.qwen_picker = share.qwen_picker
             self._council_sem = share._council_sem
             return
 
         self.evaluator = MoveEvaluator()
         self._connected = False
-        self.llm_client = (
-            AsyncOpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-            if LLM_ENABLED
-            else None
-        )
+        self.llm_client = make_llm_client()
+        self.qwen_client = make_qwen_client()
         self.tactical = TacticalAgent(self.llm_client, LLM_MODEL)
         self.strategic = StrategicAgent(self.llm_client, LLM_MODEL)
         self.risk = RiskAgent(self.llm_client, LLM_MODEL)
         self.coach = CoachAgent(self.llm_client, LLM_MODEL)
         self.arbiter = ArbiterAgent(self.llm_client, LLM_MODEL)
         self.move_picker = MovePickerAgent(self.llm_client, LLM_MODEL)
+        self.qwen_picker = MovePickerAgent(self.qwen_client, QWEN_MODEL)
         self._council_sem = asyncio.Semaphore(LLM_MAX_CONCURRENT)
 
     async def connect(self):
@@ -113,7 +117,7 @@ class ChessMindOrchestrator:
         self,
         mode: GameMode = "human_vs_human",
         human_color: Literal["white", "black"] = "white",
-        white_ai: Literal["llm", "engine"] = "llm",
+        white_ai: WhiteAi = "llm",
         engine_depth: int | None = None,
         with_analysis: bool = True,
         coach_level: CoachLevel | None = None,
@@ -122,6 +126,11 @@ class ChessMindOrchestrator:
         self.game.reset()
         self.mode = mode
         self.human_color = human_color
+        # 未配置千问时，禁止把白方设为 qwen
+        if white_ai == "qwen" and not QWEN_ENABLED:
+            white_ai = "llm" if LLM_ENABLED else "engine"
+        if white_ai == "llm" and not LLM_ENABLED:
+            white_ai = "qwen" if QWEN_ENABLED else "engine"
         self.white_ai = white_ai
         self.engine_depth = engine_depth if engine_depth is not None else AI_ENGINE_DEPTH
         self.with_analysis = with_analysis
@@ -359,7 +368,20 @@ class ChessMindOrchestrator:
             pgn=self.game.to_pgn(),
         )
 
-    def _side_controller(self, color: chess.Color) -> Literal["human", "llm", "engine"]:
+    def _opponent_ai(self) -> AiController:
+        """AI vs AI 时，非白方执棋者。优先 GLM↔千问对决。"""
+        if self.white_ai == "llm":
+            return "qwen" if QWEN_ENABLED else "engine"
+        if self.white_ai == "qwen":
+            return "llm" if LLM_ENABLED else "engine"
+        # 白方引擎：黑方尽量用 GLM，否则千问
+        if LLM_ENABLED:
+            return "llm"
+        if QWEN_ENABLED:
+            return "qwen"
+        return "engine"
+
+    def _side_controller(self, color: chess.Color) -> AiController:
         if self.mode == "human_vs_human":
             return "human"
         if self.mode == "human_vs_ai":
@@ -369,9 +391,9 @@ class ChessMindOrchestrator:
             return "human" if not human_is_white else "llm"
         if color == chess.WHITE:
             return self.white_ai
-        return "engine" if self.white_ai == "llm" else "llm"
+        return self._opponent_ai()
 
-    def current_controller(self) -> Literal["human", "llm", "engine"]:
+    def current_controller(self) -> AiController:
         return self._side_controller(self.game.board.turn)
 
     async def make_move(self, uci: str, *, with_analysis: bool | None = None, analysis_mode: AnalysisMode | None = None) -> dict | None:
@@ -750,7 +772,9 @@ class ChessMindOrchestrator:
         grounding = describe_position(self.game.board, eval_now)
         engine_hint = await self.evaluator.best_move(self.game.fen, depth=min(depth, 10))
 
-        pick = await self.move_picker.pick_move(
+        picker = self.qwen_picker if controller == "qwen" else self.move_picker
+        model_label = QWEN_MODEL if controller == "qwen" else LLM_MODEL
+        pick = await picker.pick_move(
             fen=self.game.fen,
             legal_moves=legal,
             move_history=self.game.get_recent_moves(16),
@@ -758,7 +782,7 @@ class ChessMindOrchestrator:
             engine_hint=engine_hint,
         )
         uci = pick.get("uci")
-        source = pick.get("source", "llm")
+        source = pick.get("source", controller)
         reason = pick.get("reason", "")
 
         if uci not in legal:
@@ -768,15 +792,15 @@ class ChessMindOrchestrator:
             return {
                 "uci": fallback,
                 "source": "engine_fallback",
-                "reason": f"LLM 无效({reason})，回退 Stockfish",
+                "reason": f"{model_label} 无效({reason})，回退 Stockfish",
                 "controller": controller,
                 "llm_attempt": pick,
             }
 
         return {
             "uci": uci,
-            "source": source,
-            "reason": reason,
+            "source": source if source != "llm" else controller,
+            "reason": f"{model_label} · {reason}" if reason else model_label,
             "controller": controller,
         }
 
@@ -808,6 +832,13 @@ class ChessMindOrchestrator:
             "llm_enabled": LLM_ENABLED,
             "llm_model": LLM_MODEL,
             "llm_base_url": LLM_BASE_URL,
+            "qwen_enabled": QWEN_ENABLED,
+            "qwen_model": QWEN_MODEL,
+            "qwen_base_url": QWEN_BASE_URL,
+            "ai_vs_ai": (
+                f"{LLM_MODEL if LLM_ENABLED else 'off'} vs "
+                f"{QWEN_MODEL if QWEN_ENABLED else ('Stockfish' if self._connected else 'off')}"
+            ),
             "mode": self.mode,
             "game_id": self.game_id,
             "product": "ChessCouncil",
@@ -818,10 +849,11 @@ class ChessMindOrchestrator:
 
         try:
             t0 = time.perf_counter()
-            resp = await self.llm_client.chat.completions.create(
+            resp = await chat_completion(
+                self.llm_client,
                 model=LLM_MODEL,
                 messages=[{"role": "user", "content": "回复OK即可"}],
-                max_tokens=5,
+                max_tokens=16,
                 temperature=0,
             )
             latency_ms = (time.perf_counter() - t0) * 1000
@@ -834,6 +866,7 @@ class ChessMindOrchestrator:
                 prompt_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
                 completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
                 total_tokens=getattr(usage, "total_tokens", None) if usage else None,
+                extra={"raw_preview": message_text(resp.choices[0].message)[:40]},
             )
             info["llm_ping"] = "ok"
             info["llm_latency_ms"] = round(latency_ms, 1)
@@ -873,6 +906,8 @@ class ChessMindOrchestrator:
             ),
             "llm_enabled": LLM_ENABLED,
             "llm_model": LLM_MODEL,
+            "qwen_enabled": QWEN_ENABLED,
+            "qwen_model": QWEN_MODEL,
             "product": "ChessCouncil",
             "library": self.library_progress(),
             "moves": [

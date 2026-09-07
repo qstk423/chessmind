@@ -1618,20 +1618,48 @@ body.page-learn .lib-item .blurb {
   stroke-dasharray: 4 4;
 }
 .eval-line {
-  stroke: var(--gold);
   stroke-width: 2.4;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
+.eval-line-up { stroke: #efe7d8; }
+.eval-line-down { stroke: #6b8f7a; }
 .eval-dot {
-  fill: #efe7d8;
-  stroke: rgba(210, 176, 106, 0.9);
   stroke-width: 1.2;
+}
+.eval-dot-up {
+  fill: #efe7d8;
+  stroke: rgba(210, 176, 106, 0.95);
+}
+.eval-dot-down {
+  fill: #6b8f7a;
+  stroke: rgba(180, 210, 190, 0.7);
 }
 .eval-axis-label {
   fill: var(--muted);
   font-size: 11px;
 }
+.eval-axis-up { fill: #efe7d8; }
+.eval-axis-down { fill: #8fb39a; }
+.eval-curve-legend {
+  display: flex;
+  gap: 14px;
+  margin: 0 0 6px;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.eval-curve-legend .leg-up::before,
+.eval-curve-legend .leg-down::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.eval-curve-legend .leg-up::before { background: #efe7d8; }
+.eval-curve-legend .leg-down::before { background: #6b8f7a; }
 .eval-curve-empty {
   margin: 10px 0;
   padding: 10px 12px;
