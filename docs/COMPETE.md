@@ -80,14 +80,15 @@ macOS：**QuickTime Player → 文件 → 新建屏幕录制**（选浏览器窗
 编辑 `.env`（不要提交真实 Key）：
 
 ```ini
-LLM_API_KEY=<智谱或天津移动下发的 Key>
-LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+LLM_API_KEY=<天津移动下发>
+LLM_BASE_URL=http://111.32.22.35:32592/mgate/v1
 LLM_MODEL=glm-5.1
 LLM_THINKING=disabled
 VISION_MODEL=glm-4v-plus
 ```
 
-重启服务后顶栏 pill 应显示 `glm-5.1`。人机对局 AI 与 AI vs AI 的大模型方均走该模型。
+重启服务后顶栏 pill 应显示 `glm-5.1`。人机对局 AI 与 AI vs AI 的大模型方均走该模型。  
+> Base URL 填到 `/v1` 为止；邮件里的完整路径若带 `/chat/completions` 请去掉这段。
 
 ## 风险预案
 

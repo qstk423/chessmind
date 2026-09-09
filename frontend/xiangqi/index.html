@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=13">
+  <link rel="stylesheet" href="style.css?v=14">
   <link rel="stylesheet" href="/shared/variant-switch.css">
 </head>
 <body class="page-play" data-page="play">
@@ -34,18 +34,27 @@
         <label class="field">
           <span>模式</span>
           <select id="game-mode">
+            <option value="human_vs_ai" selected>人 vs AI</option>
             <option value="human_vs_human">人人</option>
-            <option value="human_vs_ai">人 vs AI</option>
+            <option value="ai_vs_ai">AI vs AI</option>
           </select>
         </label>
-        <label class="field">
+        <label class="field" id="human-color-field">
           <span>执棋</span>
           <select id="human-color">
             <option value="red">红</option>
             <option value="black">黑</option>
           </select>
         </label>
-        <label class="field">
+        <label class="field" id="ai-side-field">
+          <span id="ai-side-label">对手</span>
+          <select id="red-ai">
+            <option value="llm" selected>GLM</option>
+            <option value="qwen">千问</option>
+            <option value="engine">引擎</option>
+          </select>
+        </label>
+        <label class="field" id="ai-strength-field">
           <span>难度</span>
           <select id="ai-strength">
             <option value="easy">入门</option>
@@ -59,7 +68,6 @@
         </label>
         <button class="accent setup-new" id="new-game" type="button">新对局</button>
       </div>
-
       <div class="online-bar" id="online-bar" hidden>
         <div class="online-copy">
           <strong>联机</strong>
@@ -95,8 +103,18 @@
           <button id="undo" type="button">悔棋</button>
           <button id="hint" type="button">提示</button>
           <button id="ai-step" class="accent" type="button">AI 一步</button>
+          <button id="play-toggle" type="button">播放</button>
           <button id="flip" type="button">翻转</button>
         </div>
+        <label class="speed-field">
+          <span>速度</span>
+          <select id="playback-speed">
+            <option value="1800">慢</option>
+            <option value="900" selected>中</option>
+            <option value="450">快</option>
+            <option value="220">极快</option>
+          </select>
+        </label>
       </div>
 
       <div class="script-bar" id="script-bar" hidden>
@@ -214,6 +232,6 @@
 </div>
 
 <script src="/shared/variant-switch.js"></script>
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>

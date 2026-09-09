@@ -17,6 +17,7 @@ class GameSessions:
         self._games: dict[str, XiangqiGame] = {}
         self._touched: dict[str, float] = {}
         self._library: dict[str, dict] = {}
+        self._settings: dict[str, dict] = {}
 
     def _purge(self) -> None:
         now = time.time()
@@ -25,11 +26,13 @@ class GameSessions:
             self._games.pop(sid, None)
             self._touched.pop(sid, None)
             self._library.pop(sid, None)
+            self._settings.pop(sid, None)
         while len(self._games) > _MAX_SESSIONS:
             oldest = min(self._touched, key=self._touched.get)
             self._games.pop(oldest, None)
             self._touched.pop(oldest, None)
             self._library.pop(oldest, None)
+            self._settings.pop(oldest, None)
 
     def stats(self) -> dict[str, int]:
         with self._lock:
@@ -56,6 +59,26 @@ class GameSessions:
     def set_library(self, session_id: str, data: dict) -> None:
         with self._lock:
             self._library[session_id] = data
+            self._touched[session_id] = time.time()
+
+    def settings_of(self, session_id: str) -> dict:
+        with self._lock:
+            return dict(
+                self._settings.setdefault(
+                    session_id,
+                    {
+                        "mode": "human_vs_human",
+                        "human_color": "red",
+                        "red_ai": "engine",
+                        "strength": "normal",
+                    },
+                )
+            )
+
+    def set_settings(self, session_id: str, data: dict) -> None:
+        with self._lock:
+            cur = self._settings.setdefault(session_id, {})
+            cur.update(data)
             self._touched[session_id] = time.time()
 
 

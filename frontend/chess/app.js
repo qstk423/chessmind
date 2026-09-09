@@ -1221,32 +1221,26 @@ function updateStatus() {
 function refreshModeControls() {
   const mode = $('#game-mode').val();
   const humanField = $('#human-color').closest('.field');
-  const whiteAiField = $('#white-ai').closest('.field');
+  const whiteAiField = $('#ai-side-field').length ? $('#ai-side-field') : $('#white-ai').closest('.field');
   const councilField = $('#with-analysis').closest('.field');
   const analysisModeField = $('#analysis-mode-field');
   $('#human-color').prop('disabled', mode !== 'human_vs_ai');
-  $('#white-ai').prop('disabled', mode !== 'ai_vs_ai');
-  // PC 上隐藏无关控件，避免功能栏显得错乱
+  $('#white-ai').prop('disabled', !(mode === 'ai_vs_ai' || mode === 'human_vs_ai'));
   if (mode === 'human_vs_ai') {
     humanField.removeAttr('hidden');
-    whiteAiField.attr('hidden', true);
+    whiteAiField.removeAttr('hidden');
+    $('#ai-side-label').text('对手');
     councilField.removeAttr('hidden');
     analysisModeField.removeAttr('hidden');
     $('#with-analysis').prop('disabled', false);
   } else if (mode === 'ai_vs_ai') {
     humanField.attr('hidden', true);
     whiteAiField.removeAttr('hidden');
+    $('#ai-side-label').text('白方');
     councilField.removeAttr('hidden');
     analysisModeField.removeAttr('hidden');
     $('#with-analysis').prop('disabled', false);
-    const pair = $('#white-ai').val();
-    const tip =
-      pair === 'qwen' ? 'AI vs AI：千问（白） vs GLM-5.1（黑）' :
-      pair === 'engine' ? 'AI vs AI：Stockfish（白） vs GLM-5.1（黑）' :
-      'AI vs AI：GLM-5.1（白） vs 千问（黑）';
-    $('#ai-meta').text(tip);
   } else {
-    // 人人局：对局中不实时 Council，终局统一生成
     humanField.attr('hidden', true);
     whiteAiField.attr('hidden', true);
     councilField.attr('hidden', true);

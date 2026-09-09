@@ -60,12 +60,12 @@
             <option value="black">黑</option>
           </select>
         </label>
-        <label class="field">
-          <span>白方 AI</span>
+        <label class="field" id="ai-side-field">
+          <span id="ai-side-label">对手</span>
           <select id="white-ai">
-            <option value="llm" selected>白=GLM · 黑=千问</option>
-            <option value="qwen">白=千问 · 黑=GLM</option>
-            <option value="engine">白=Stockfish · 黑=GLM</option>
+            <option value="llm" selected>GLM</option>
+            <option value="qwen">千问</option>
+            <option value="engine">引擎</option>
           </select>
         </label>
         <label class="field check">
@@ -270,6 +270,6 @@
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
 <script src="/shared/variant-switch.js"></script>
-<script src="app.js?v=mapp15"></script>
+<script src="app.js?v=mapp16"></script>
 </body>
 </html>

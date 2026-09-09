@@ -31,8 +31,11 @@ let inCheck = false;
 let isGameOver = false;
 let gameResult = '';
 let boardTipTimer = null;
-let mode = 'human_vs_human';
+let mode = 'human_vs_ai';
 let humanColor = 'red';
+let redAi = 'llm';
+let autoPlay = false;
+let autoTimer = null;
 let online = { active: false, roomId: null, token: null, color: null, ws: null };
 let lastCouncil = null;
 let verdictUci = null;
@@ -213,17 +216,35 @@ function renderBoard() {
 }
 
 function setStatus(state) {
+  if (state.mode) mode = state.mode;
+  if (state.human_color) humanColor = state.human_color;
+  if (state.red_ai) redAi = state.red_ai;
   const topIsBlack = !flipped;
   const topColor = topIsBlack ? 'black' : 'red';
   const bottomColor = topIsBlack ? 'red' : 'black';
   const topEl = document.getElementById('top-state');
   const bottomEl = document.getElementById('bottom-state');
+  const topName = document.getElementById('top-name');
+  const bottomName = document.getElementById('bottom-name');
   const turnBadge = document.getElementById('turn-badge');
   const checkBadge = document.getElementById('check-badge');
   const resultBanner = document.getElementById('result-banner');
+  const sideName = (color) => {
+    if (mode === 'human_vs_ai') {
+      if (color === humanColor) return color === 'red' ? '红方 · 你' : '黑方 · 你';
+      return `${color === 'red' ? '红方' : '黑方'} · ${aiLabel(redAi)}`;
+    }
+    if (mode === 'ai_vs_ai') {
+      const side = color === 'red' ? (state.red_ai || redAi) : (state.black_ai || 'engine');
+      return `${color === 'red' ? '红方' : '黑方'} · ${aiLabel(side)}`;
+    }
+    return color === 'red' ? '红方' : '黑方';
+  };
+  if (topName) topName.textContent = sideName(topColor);
+  if (bottomName) bottomName.textContent = sideName(bottomColor);
   if (turnBadge) turnBadge.textContent = state.is_game_over ? '对局结束' : `${state.turn === 'red' ? '红' : '黑'}方行棋`;
-  if (topEl) topEl.textContent = state.is_game_over ? (state.result || '') : (state.turn === topColor ? '轮到你走' : '等待中');
-  if (bottomEl) bottomEl.textContent = state.is_game_over ? (state.result || '') : (state.turn === bottomColor ? '轮到你走' : '等待中');
+  if (topEl) topEl.textContent = state.is_game_over ? (state.result || '') : (state.turn === topColor ? '轮到走' : '等待中');
+  if (bottomEl) bottomEl.textContent = state.is_game_over ? (state.result || '') : (state.turn === bottomColor ? '轮到走' : '等待中');
   if (checkBadge) checkBadge.hidden = !state.in_check || !!state.is_game_over;
   if (resultBanner) {
     if (state.result) {
@@ -237,6 +258,7 @@ function setStatus(state) {
   isGameOver = !!state.is_game_over;
   gameResult = state.result || '';
   if (!inCheck || isGameOver) hideBoardTip();
+  if (isGameOver) stopAuto();
   const list = document.getElementById('move-list');
   const count = document.getElementById('move-count');
   if (count) count.textContent = `${state.move_count || 0} 着`;
@@ -742,7 +764,7 @@ function moveCursor(dRow, dCol) {
 
 async function activateCursorSquare() {
   const stateTurn = turn;
-  const may = online.active ? online.color === stateTurn : (mode === 'human_vs_ai' ? stateTurn === humanColor : true);
+  const may = online.active ? online.color === stateTurn : (mode === 'human_vs_ai' ? stateTurn === humanColor : mode !== 'ai_vs_ai');
   if (!may || busy) return;
   const point = { ...cursorSquare };
   const piece = board[point.row]?.[point.col];
@@ -1047,14 +1069,136 @@ function aiStrength() {
   return document.getElementById('ai-strength')?.value || 'normal';
 }
 
-async function maybeAiReply(state) {
-  if (mode !== 'human_vs_ai' || state.is_game_over || online.active) return;
-  if (state.turn === humanColor) return;
+function redAiValue() {
+  return document.getElementById('red-ai')?.value || redAi || 'llm';
+}
+
+function aiLabel(side) {
+  if (side === 'qwen') return '千问';
+  if (side === 'llm') return 'GLM';
+  return '引擎';
+}
+
+function playbackDelayMs() {
+  const el = document.getElementById('playback-speed');
+  const n = parseInt(el?.value || '900', 10);
+  return Number.isFinite(n) ? n : 900;
+}
+
+function syncPlayToggle() {
+  const btn = document.getElementById('play-toggle');
+  if (!btn) return;
+  btn.textContent = autoPlay ? '暂停' : '播放';
+  btn.classList.toggle('is-playing', !!autoPlay);
+  btn.hidden = mode !== 'ai_vs_ai';
+}
+
+function stopAuto() {
+  autoPlay = false;
+  if (autoTimer) {
+    clearTimeout(autoTimer);
+    autoTimer = null;
+  }
+  syncPlayToggle();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function refreshModeControls() {
+  mode = document.getElementById('game-mode')?.value || 'human_vs_ai';
+  const humanField = document.getElementById('human-color-field');
+  const aiField = document.getElementById('ai-side-field');
+  const strengthField = document.getElementById('ai-strength-field');
+  const label = document.getElementById('ai-side-label');
+  const meta = document.querySelector('.ai-meta');
+  if (mode === 'human_vs_ai') {
+    humanField?.removeAttribute('hidden');
+    aiField?.removeAttribute('hidden');
+    strengthField?.removeAttribute('hidden');
+    if (label) label.textContent = '对手';
+    if (meta) meta.textContent = '人 vs AI · 走棋后下滑查看 Council';
+  } else if (mode === 'ai_vs_ai') {
+    humanField?.setAttribute('hidden', 'true');
+    aiField?.removeAttribute('hidden');
+    strengthField?.removeAttribute('hidden');
+    if (label) label.textContent = '红方';
+    if (meta) meta.textContent = 'AI vs AI · 点播放自动连走';
+  } else {
+    humanField?.setAttribute('hidden', 'true');
+    aiField?.setAttribute('hidden', 'true');
+    strengthField?.setAttribute('hidden', 'true');
+    if (meta) meta.textContent = '人人局 · 对局中可点 Council，结束后统一复盘';
+  }
+  syncPlayToggle();
+}
+
+async function runAiStep({ nested = false } = {}) {
+  if (busy && !autoPlay && !nested) return;
+  if (isGameOver) return;
   busy = true;
   try {
     const next = await api(`/game/ai-step?strength=${encodeURIComponent(aiStrength())}`, { method: 'POST' });
     applyState(next);
+    const reason = next?.ai_meta?.reason;
+    if (reason) {
+      const meta = document.querySelector('.ai-meta');
+      if (meta) meta.textContent = reason;
+    }
     await maybeAnalyzeAfterMove();
+    return next;
+  } catch (err) {
+    console.error(err);
+    stopAuto();
+    throw err;
+  } finally {
+    if (!nested) busy = false;
+  }
+}
+
+function scheduleAuto() {
+  if (!autoPlay || isGameOver || mode !== 'ai_vs_ai') {
+    stopAuto();
+    return;
+  }
+  if (autoTimer) clearTimeout(autoTimer);
+  autoTimer = setTimeout(async () => {
+    if (!autoPlay) return;
+    try {
+      await runAiStep({ nested: true });
+      busy = false;
+      if (autoPlay && !isGameOver) scheduleAuto();
+      else stopAuto();
+    } catch (err) {
+      busy = false;
+      alert(err.message || String(err));
+      stopAuto();
+    }
+  }, playbackDelayMs());
+}
+
+function startAuto() {
+  if (mode !== 'ai_vs_ai') {
+    stopAuto();
+    return;
+  }
+  autoPlay = true;
+  syncPlayToggle();
+  scheduleAuto();
+}
+
+async function maybeAiReply(state) {
+  if (online.active || state.is_game_over) return;
+  if (mode === 'ai_vs_ai') {
+    if (autoPlay) scheduleAuto();
+    return;
+  }
+  if (mode !== 'human_vs_ai') return;
+  if (state.turn === humanColor) return;
+  if (state.controller === 'human') return;
+  try {
+    await runAiStep({ nested: true });
   } catch (err) {
     console.error(err);
   } finally {
@@ -1065,6 +1209,7 @@ async function maybeAiReply(state) {
 async function newGame() {
   clearStudyState();
   hideFinale();
+  stopAuto();
   lastFinaleKey = null;
   const section = document.getElementById('review-section');
   if (section) {
@@ -1078,12 +1223,18 @@ async function newGame() {
   }
   mode = document.getElementById('game-mode')?.value || 'human_vs_human';
   humanColor = document.getElementById('human-color')?.value || 'red';
-  flipped = humanColor === 'black';
+  redAi = redAiValue();
+  flipped = mode === 'human_vs_ai' && humanColor === 'black';
   const state = await api('/game/new', {
     method: 'POST',
-    body: JSON.stringify({ mode, human_color: humanColor }),
+    body: JSON.stringify({ mode, human_color: humanColor, red_ai: redAi }),
   });
   applyState(state);
+  refreshModeControls();
+  if (mode === 'ai_vs_ai') {
+    syncPlayToggle();
+    return;
+  }
   await maybeAiReply(state);
 }
 
@@ -1167,7 +1318,7 @@ function rebuildHighlights() {
 async function onBoardClick(event) {
   if (!canvas || busy) return;
   const stateTurn = turn;
-  const may = online.active ? online.color === stateTurn : (mode === 'human_vs_ai' ? stateTurn === humanColor : true);
+  const may = online.active ? online.color === stateTurn : (mode === 'human_vs_ai' ? stateTurn === humanColor : mode !== 'ai_vs_ai');
   if (!may) return;
 
   const rect = canvas.getBoundingClientRect();
@@ -1244,14 +1395,21 @@ async function bootPlay() {
   document.getElementById('ai-step')?.addEventListener('click', async () => {
     if (online.active) return alert('联机中请双方自行走子');
     if (studyLocked()) return alert('残局/闯关请自己走出正解，不能让 AI 代走');
+    if (autoPlay) return;
     try {
-      const next = await api(`/game/ai-step?strength=${encodeURIComponent(aiStrength())}`, { method: 'POST' });
-      applyState(next);
-      await maybeAnalyzeAfterMove();
-      await maybeAiReply(next);
+      const next = await runAiStep();
+      await maybeAiReply(next || {});
     } catch (err) {
       alert(err.message);
     }
+  });
+  document.getElementById('play-toggle')?.addEventListener('click', () => {
+    if (mode !== 'ai_vs_ai') return;
+    if (autoPlay) stopAuto();
+    else startAuto();
+  });
+  document.getElementById('playback-speed')?.addEventListener('change', () => {
+    if (autoPlay) scheduleAuto();
   });
   document.getElementById('btn-room-reset')?.addEventListener('click', () => {
     resetOnlineRoom().catch((err) => alert(err.message));
@@ -1278,11 +1436,15 @@ async function bootPlay() {
     }
   });
   document.getElementById('game-mode')?.addEventListener('change', () => {
-    mode = document.getElementById('game-mode').value;
+    refreshModeControls();
   });
   document.getElementById('human-color')?.addEventListener('change', () => {
     humanColor = document.getElementById('human-color').value;
   });
+  document.getElementById('red-ai')?.addEventListener('change', () => {
+    redAi = redAiValue();
+  });
+  refreshModeControls();
   const resumed = await resumeOnlineIfNeeded();
   updateOnlineBar();
   if (resumed) {

@@ -386,9 +386,10 @@ class ChessMindOrchestrator:
             return "human"
         if self.mode == "human_vs_ai":
             human_is_white = self.human_color == "white"
+            ai_side: AiController = self.white_ai
             if color == chess.WHITE:
-                return "human" if human_is_white else "llm"
-            return "human" if not human_is_white else "llm"
+                return "human" if human_is_white else ai_side
+            return "human" if not human_is_white else ai_side
         if color == chess.WHITE:
             return self.white_ai
         return self._opponent_ai()

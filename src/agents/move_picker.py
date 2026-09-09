@@ -23,14 +23,27 @@ MOVE_PICKER_PROMPT = """你是国际象棋对弈 AI（模型：GLM）。你必�
 输出格式：仅一行 JSON，形如 {"uci":"e2e4","reason":"占领中心"}
 reason 用中文，不超过 20 字。"""
 
+XIANGQI_MOVE_PICKER_PROMPT = """你是中国象棋对弈 AI。你必须从给定的合法着法列表中选择一步棋。
+
+硬性规则：
+1. 只能输出列表中已有的 UCI 着法（例如 h2e2、b2e2、a3a4）
+2. 禁止输出中文着法注释、解释或多步着法
+3. 优先考虑：将帅安全、子力得失、出子发展、中路与河界控制
+4. 若有绝杀、将军或得子机会，优先抓住
+5. 注意马蹩腿、象塞象眼、炮隔子打、士象不能过河等规则约束（合法列表已过滤）
+
+输出格式：仅一行 JSON，形如 {"uci":"h2e2","reason":"中炮开局"}
+reason 用中文，不超过 20 字。"""
+
 
 class MovePickerAgent:
     """用 LLM（默认 glm-5.1）从合法着法中选一步；失败时由调用方回退引擎。"""
 
-    def __init__(self, client: AsyncOpenAI | None, model: str):
+    def __init__(self, client: AsyncOpenAI | None, model: str, *, system_prompt: str | None = None):
         self.name = "选着Agent"
         self.client = client
         self.model = model
+        self.system_prompt = system_prompt or MOVE_PICKER_PROMPT
 
     async def pick_move(
         self,
@@ -69,7 +82,7 @@ class MovePickerAgent:
                     self.client,
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": MOVE_PICKER_PROMPT},
+                        {"role": "system", "content": self.system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.3,

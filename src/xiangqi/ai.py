@@ -294,7 +294,7 @@ def choose_move(
     *,
     strength: Strength | None = None,
 ) -> str | None:
-    """统一入口：有 Pikafish 用引擎，否则用强化内建。"""
+    """引擎选着：有 Pikafish 用引擎，否则用强化内建。"""
     level: Strength = strength or "normal"
     if depth is not None:
         # 兼容旧接口 depth=1..5 → 档位
@@ -317,3 +317,83 @@ def choose_move(
         pass
 
     return choose_move_builtin(game, strength=level)
+
+
+AiSide = Literal["engine", "llm", "qwen"]
+
+
+def opponent_ai(red_ai: AiSide) -> AiSide:
+    """AI vs AI：红方选定后，黑方配对（优先 GLM↔千问）。"""
+    from src.config import LLM_ENABLED, QWEN_ENABLED
+
+    if red_ai == "llm":
+        return "qwen" if QWEN_ENABLED else "engine"
+    if red_ai == "qwen":
+        return "llm" if LLM_ENABLED else "engine"
+    if LLM_ENABLED:
+        return "llm"
+    if QWEN_ENABLED:
+        return "qwen"
+    return "engine"
+
+
+def resolve_ai_side(
+    *,
+    mode: str,
+    turn: str,
+    human_color: str = "red",
+    red_ai: AiSide = "engine",
+) -> AiSide | None:
+    """当前应由哪一侧 AI 走；人类回合返回 None。"""
+    if mode == "human_vs_human":
+        return None
+    if mode == "human_vs_ai":
+        if turn == human_color:
+            return None
+        return red_ai if red_ai in ("engine", "llm", "qwen") else "engine"
+    if mode == "ai_vs_ai":
+        side = red_ai if turn == "red" else opponent_ai(red_ai)
+        return side if side in ("engine", "llm", "qwen") else "engine"
+    return "engine"
+
+
+async def choose_move_for_side(
+    game: XiangqiGame,
+    *,
+    ai_side: AiSide = "engine",
+    strength: Strength = "normal",
+    depth: int | None = None,
+) -> dict:
+    """统一选着：LLM/千问优先，失败回退引擎。"""
+    if ai_side in ("llm", "qwen"):
+        try:
+            from src.xiangqi.llm_picker import pick_xiangqi_move
+
+            pick = await pick_xiangqi_move(game, which=ai_side)  # type: ignore[arg-type]
+            uci = pick.get("uci")
+            legal = {mv.uci for mv in legal_moves(game.board, game.turn)}
+            if uci and uci in legal:
+                return {
+                    "uci": uci,
+                    "source": ai_side,
+                    "reason": pick.get("reason") or "",
+                    "controller": ai_side,
+                }
+            fallback_reason = pick.get("reason") or "无效着法"
+        except Exception as exc:  # noqa: BLE001
+            fallback_reason = f"{type(exc).__name__}: {exc}"
+        eng = choose_move(game, depth=depth, strength=strength)
+        return {
+            "uci": eng,
+            "source": "engine_fallback",
+            "reason": f"{ai_side} 失败({fallback_reason})，回退引擎",
+            "controller": ai_side,
+        }
+
+    eng = choose_move(game, depth=depth, strength=strength)
+    return {
+        "uci": eng,
+        "source": "engine",
+        "reason": f"engine · {strength}",
+        "controller": "engine",
+    }

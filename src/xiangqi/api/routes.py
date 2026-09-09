@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from src.xiangqi.ai import choose_move
+from src.xiangqi.ai import choose_move_for_side, opponent_ai, resolve_ai_side
 from src.xiangqi.council import analyze_position
 from src.xiangqi.library import get_library_item, list_challenges, list_library
 from src.xiangqi.puzzles import get_puzzle, list_puzzles, solution_lines_of
@@ -17,6 +17,7 @@ router = APIRouter()
 class NewGameRequest(BaseModel):
     mode: str = "human_vs_human"
     human_color: str = "red"
+    red_ai: str = "engine"
     fen: str | None = None
 
 
@@ -46,6 +47,13 @@ def _sid(x_session_id: str | None, response: Response) -> tuple[str, object]:
     return sid, game
 
 
+def _normalize_red_ai(value: str | None) -> str:
+    v = (value or "engine").strip().lower()
+    if v not in ("engine", "llm", "qwen"):
+        return "engine"
+    return v
+
+
 def _state(game, sid: str, **extra):
     data = game.snapshot()
     lib = sessions.library_of(sid)
@@ -61,7 +69,25 @@ def _state(game, sid: str, **extra):
             "done": bool(moves) and idx >= len(moves),
             "meta": lib.get("meta"),
         }
+    settings = sessions.settings_of(sid)
+    mode = settings.get("mode", "human_vs_human")
+    human_color = settings.get("human_color", "red")
+    red_ai = _normalize_red_ai(settings.get("red_ai"))
+    controller = None
+    if not game.result:
+        side = resolve_ai_side(
+            mode=mode,
+            turn=game.turn,
+            human_color=human_color,
+            red_ai=red_ai,  # type: ignore[arg-type]
+        )
+        controller = "human" if side is None else side
     data["session_id"] = sid
+    data["mode"] = mode
+    data["human_color"] = human_color
+    data["red_ai"] = red_ai
+    data["black_ai"] = opponent_ai(red_ai) if mode == "ai_vs_ai" else None  # type: ignore[arg-type]
+    data["controller"] = controller
     data.update(extra)
     return data
 
@@ -82,6 +108,7 @@ def _parse_square(sq: str) -> tuple[int, int]:
 
 @router.get("/health")
 def health():
+    from src.config import LLM_ENABLED, LLM_MODEL, QWEN_ENABLED, QWEN_MODEL
     from src.xiangqi.rooms import room_manager
 
     engine_info = {"available": False}
@@ -96,10 +123,14 @@ def health():
         "status": "ok",
         "product": "ChessCouncil",
         "variant": "xiangqi",
-        "version": "0.3.3",
+        "version": "0.3.4",
         "engine": "pikafish" if engine_info.get("available") else "builtin_minimax_v2",
         "pikafish": engine_info,
         "council": "heuristic_v2",
+        "llm_enabled": LLM_ENABLED,
+        "llm_model": LLM_MODEL,
+        "qwen_enabled": QWEN_ENABLED,
+        "qwen_model": QWEN_MODEL,
         "rules": "mvp_mate_stalemate_threefold_perpetual_check",
         "sessions": "header",
         "session_pool": sessions.stats(),
@@ -114,6 +145,8 @@ def capabilities():
             "rules_engine",
             "local_play",
             "human_vs_ai",
+            "ai_vs_ai",
+            "llm_move_pick",
             "undo",
             "legal_highlights",
             "check_detect",
@@ -128,7 +161,7 @@ def capabilities():
             "threefold_draw",
             "perpetual_check_loss",
         ],
-        "planned": ["pikafish", "llm_debate", "opening_book", "accounts", "perpetual_chase"],
+        "planned": ["llm_debate", "accounts", "perpetual_chase"],
     }
 
 
@@ -141,13 +174,28 @@ def new_game(
     req = req or NewGameRequest()
     sid, game = _sid(x_session_id, response)
     fen = req.fen or START_FEN
+    mode = (req.mode or "human_vs_human").strip()
+    if mode not in ("human_vs_human", "human_vs_ai", "ai_vs_ai"):
+        mode = "human_vs_human"
+    human_color = (req.human_color or "red").strip().lower()
+    if human_color not in ("red", "black"):
+        human_color = "red"
+    red_ai = _normalize_red_ai(req.red_ai)
     try:
         parse_fen(fen)
         game.reset(fen)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     sessions.set_library(sid, {"id": None, "moves": [], "index": 0, "meta": None})
-    return _state(game, sid, mode=req.mode, human_color=req.human_color)
+    sessions.set_settings(
+        sid,
+        {
+            "mode": mode,
+            "human_color": human_color,
+            "red_ai": red_ai,
+        },
+    )
+    return _state(game, sid)
 
 
 @router.get("/game/state")
@@ -157,7 +205,6 @@ def game_state(
 ):
     sid, game = _sid(x_session_id, response)
     return _state(game, sid)
-
 
 @router.post("/game/move")
 def make_move(
@@ -186,23 +233,47 @@ def undo_move(
 
 
 @router.post("/game/ai-step")
-def ai_step(
+async def ai_step(
     response: Response,
     depth: int | None = None,
     strength: str = "normal",
+    ai_side: str | None = None,
     x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ):
     sid, game = _sid(x_session_id, response)
     if game.result:
         raise HTTPException(400, "对局已结束")
-    level = (strength or "normal").strip().lower()
+    settings = sessions.settings_of(sid)
+    mode = settings.get("mode", "human_vs_human")
+    human_color = settings.get("human_color", "red")
+    red_ai = _normalize_red_ai(settings.get("red_ai"))
+    level = (strength or settings.get("strength") or "normal").strip().lower()
     if level not in ("easy", "normal", "hard"):
         level = "normal"
-    # 兼容旧 depth 参数
-    kwargs: dict = {"strength": level}
+    sessions.set_settings(sid, {"strength": level})
+
+    side = _normalize_red_ai(ai_side) if ai_side else None
+    if not side:
+        resolved = resolve_ai_side(
+            mode=mode,
+            turn=game.turn,
+            human_color=human_color,
+            red_ai=red_ai,  # type: ignore[arg-type]
+        )
+        if resolved is not None:
+            side = resolved
+        elif mode == "human_vs_ai":
+            # 手动「AI 一步」允许在人类回合代走
+            side = red_ai
+        else:
+            side = "engine"
+    assert side is not None
+
+    kwargs: dict = {"strength": level, "ai_side": side}
     if depth is not None:
         kwargs["depth"] = max(1, min(5, int(depth)))
-    uci = choose_move(game, **kwargs)
+    choice = await choose_move_for_side(game, **kwargs)
+    uci = choice.get("uci")
     if not uci:
         raise HTTPException(400, "无合法着法")
     entry = game.play_uci(uci)
@@ -214,6 +285,11 @@ def ai_step(
     except Exception:
         state["ai_engine"] = {"available": False}
     state["ai_strength"] = level
+    state["ai_meta"] = {
+        "source": choice.get("source"),
+        "reason": choice.get("reason"),
+        "controller": choice.get("controller") or side,
+    }
     return state
 
 

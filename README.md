@@ -195,8 +195,8 @@ pytest -q tests/test_api_smoke.py tests/xiangqi/
 ### 关键配置
 
 ```ini
-LLM_API_KEY=你的智谱或大赛Key
-LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+LLM_API_KEY=你的大赛或智谱Key
+LLM_BASE_URL=http://111.32.22.35:32592/mgate/v1
 LLM_MODEL=glm-5.1
 LLM_THINKING=disabled
 VISION_MODEL=glm-4v-plus
@@ -213,6 +213,8 @@ ADMIN_TOKEN=please-change-me
 OWNER_SECRET=please-change-owner-secret
 CORS_ORIGINS=https://your.domain
 ```
+
+大赛网关示例：`LLM_BASE_URL=http://111.32.22.35:32592/mgate/v1`（不要带 `/chat/completions`）。开发也可用智谱 `https://open.bigmodel.cn/api/paas/v4`。
 
 `OWNER_SECRET` 可选：设置后历史读写要求 `/api/visitor` 签发的签名 `X-Owner-Id`。
 
