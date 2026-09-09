@@ -134,22 +134,6 @@ function drawBoard() {
   ctx.fillText(flipped ? '漢界' : '楚河', padX + cellX * 2, padY + cellY * 4.5);
   ctx.fillText(flipped ? '楚河' : '漢界', padX + cellX * 6, padY + cellY * 4.5);
 
-  if (lastMove) {
-    for (const [r, c] of [lastMove.from, lastMove.to]) {
-      const p = screenPoint(r, c);
-      ctx.fillStyle = 'rgba(255, 214, 90, .28)';
-      ctx.beginPath();
-      ctx.arc(padX + p.col * cellX, padY + p.row * cellY, Math.min(cellX, cellY) * 0.42, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  if (selected) {
-    const p = screenPoint(selected.row, selected.col);
-    ctx.fillStyle = 'rgba(255, 238, 125, .4)';
-    ctx.beginPath();
-    ctx.arc(padX + p.col * cellX, padY + p.row * cellY, Math.min(cellX, cellY) * 0.43, 0, Math.PI * 2);
-    ctx.fill();
-  }
   if (cursorSquare && document.activeElement === canvas) {
     const p = screenPoint(cursorSquare.row, cursorSquare.col);
     ctx.strokeStyle = 'rgba(30, 90, 160, .9)';
@@ -209,10 +193,69 @@ function drawPieces() {
   }
 }
 
+function drawPieceRing(row, col, { active = false } = {}) {
+  const { padX, padY, cellX, cellY } = metrics();
+  const p = screenPoint(row, col);
+  const x = padX + p.col * cellX;
+  const y = padY + p.row * cellY;
+  const base = Math.min(cellX, cellY);
+  const radius = base * (active ? 0.48 : 0.46);
+
+  ctx.save();
+  if (active) {
+    ctx.shadowColor = 'rgba(48, 230, 130, 0.9)';
+    ctx.shadowBlur = 18;
+    ctx.strokeStyle = 'rgba(70, 240, 140, 0.98)';
+    ctx.lineWidth = Math.max(3.5, base * 0.045);
+    // 外圈柔光
+    ctx.beginPath();
+    ctx.arc(x, y, radius + base * 0.04, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 8;
+    ctx.strokeStyle = 'rgba(180, 255, 200, 0.85)';
+    ctx.lineWidth = Math.max(2, base * 0.028);
+  } else {
+    ctx.shadowColor = 'rgba(48, 200, 120, 0.35)';
+    ctx.shadowBlur = 10;
+    ctx.strokeStyle = 'rgba(80, 210, 130, 0.48)';
+    ctx.lineWidth = Math.max(2.5, base * 0.032);
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMoveGlows() {
+  if (lastMove) {
+    const [fr, fc] = lastMove.from;
+    const [tr, tc] = lastMove.to;
+    drawPieceRing(fr, fc, { active: false });
+    drawPieceRing(tr, tc, { active: false });
+    // 终点略加强：再描一圈更淡的外晕
+    const { padX, padY, cellX, cellY } = metrics();
+    const p = screenPoint(tr, tc);
+    const x = padX + p.col * cellX;
+    const y = padY + p.row * cellY;
+    const base = Math.min(cellX, cellY);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(72, 210, 125, 0.28)';
+    ctx.lineWidth = Math.max(2, base * 0.03);
+    ctx.beginPath();
+    ctx.arc(x, y, base * 0.52, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (selected) {
+    drawPieceRing(selected.row, selected.col, { active: true });
+  }
+}
+
 function renderBoard() {
   if (!canvas) return;
   drawBoard();
   drawPieces();
+  drawMoveGlows();
 }
 
 function setStatus(state) {
@@ -1019,6 +1062,12 @@ async function maybeAnalyzeAfterMove() {
   } catch (_) {}
 }
 
+function queueAnalyzeAfterMove() {
+  if (online.active) return;
+  if (!document.getElementById('with-analysis')?.checked) return;
+  runCouncilAnalyze({ silent: true }).catch(() => {});
+}
+
 function clearStudyState() {
   activePuzzleId = null;
   challengeState = { active: false, id: null, level: null, title: '', goal: '', humanColor: 'red' };
@@ -1113,18 +1162,21 @@ function refreshModeControls() {
   const strengthField = document.getElementById('ai-strength-field');
   const label = document.getElementById('ai-side-label');
   const meta = document.querySelector('.ai-meta');
+  const aiStepBtn = document.getElementById('ai-step');
+  // 人人 / 人机自动应着 / 机机用播放：隐藏「AI 一步」
+  if (aiStepBtn) aiStepBtn.hidden = true;
   if (mode === 'human_vs_ai') {
     humanField?.removeAttribute('hidden');
     aiField?.removeAttribute('hidden');
     strengthField?.removeAttribute('hidden');
     if (label) label.textContent = '对手';
-    if (meta) meta.textContent = '人 vs AI · 走棋后下滑查看 Council';
+    if (meta) meta.textContent = '人 vs AI · 你走完 AI 会自动应着';
   } else if (mode === 'ai_vs_ai') {
     humanField?.setAttribute('hidden', 'true');
     aiField?.removeAttribute('hidden');
     strengthField?.removeAttribute('hidden');
     if (label) label.textContent = '红方';
-    if (meta) meta.textContent = 'AI vs AI · 点播放自动连走';
+    if (meta) meta.textContent = 'AI vs AI · 新开局后自动连走，可点暂停';
   } else {
     humanField?.setAttribute('hidden', 'true');
     aiField?.setAttribute('hidden', 'true');
@@ -1146,7 +1198,8 @@ async function runAiStep({ nested = false } = {}) {
       const meta = document.querySelector('.ai-meta');
       if (meta) meta.textContent = reason;
     }
-    await maybeAnalyzeAfterMove();
+    // 不阻塞下一手：Council 后台刷新
+    queueAnalyzeAfterMove();
     return next;
   } catch (err) {
     console.error(err);
@@ -1232,7 +1285,7 @@ async function newGame() {
   applyState(state);
   refreshModeControls();
   if (mode === 'ai_vs_ai') {
-    syncPlayToggle();
+    startAuto();
     return;
   }
   await maybeAiReply(state);
@@ -1284,8 +1337,9 @@ async function playMove(uci) {
     }
     const state = await api('/game/move', { method: 'POST', body: JSON.stringify({ uci }) });
     applyState(state);
-    await maybeAnalyzeAfterMove();
+    // 人机：先让 AI 应着，Council 后台更新，避免干等分析
     await maybeAiReply(state);
+    queueAnalyzeAfterMove();
   } catch (err) {
     const msg = err?.message || String(err);
     if (needsCheckResolveTip() && /非法/.test(msg)) {

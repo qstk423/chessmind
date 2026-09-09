@@ -633,9 +633,10 @@ async function submitHumanMove(uci) {
     }
 
     const useCouncil = $('#with-analysis').is(':checked');
-    // 人人局：对局中不跑 AI 评价，终局后统一生成
     const h2h = serverState.mode === 'human_vs_human';
-    const blockOnCouncil = useCouncil && !h2h;
+    const hva = serverState.mode === 'human_vs_ai';
+    // 人机：先落子再立刻让 AI 应着，Council 放到 AI 走完后异步跑，避免干等
+    const blockOnCouncil = useCouncil && !h2h && !hva;
     if (blockOnCouncil) setProgress('Council 开会中', { cycleCouncil: true });
     const analysisMode = $('#analysis-mode').val() || 'fast';
     const r = await fetch(`${API}/game/move`, {
@@ -659,8 +660,9 @@ async function submitHumanMove(uci) {
       await runPostGameReview();
     }
     if (!data.game_over && data.next_controller && data.next_controller !== 'human') {
-      await sleep(400);
-      await runAiStep({ nested: true });
+      await runAiStep({ nested: true, quick: hva });
+    } else if (hva && useCouncil && !data.game_over) {
+      queueCouncilRefresh();
     }
   } catch (err) {
     console.error('分析请求失败:', err);
@@ -1226,6 +1228,8 @@ function refreshModeControls() {
   const analysisModeField = $('#analysis-mode-field');
   $('#human-color').prop('disabled', mode !== 'human_vs_ai');
   $('#white-ai').prop('disabled', !(mode === 'ai_vs_ai' || mode === 'human_vs_ai'));
+  // 人人 / 人机自动应着 / 机机用播放：都不需要「AI 一步」
+  $('#btn-ai-step').attr('hidden', true);
   if (mode === 'human_vs_ai') {
     humanField.removeAttr('hidden');
     whiteAiField.removeAttr('hidden');
@@ -1318,25 +1322,56 @@ async function startNewGame() {
     const state = await r.json();
     applyServerState(state);
     resetPanels();
-    // 人机且人类执黑，或 AI vs AI：需要 AI 先走 / 可自动
+    refreshModeControls();
+    // 人机且人类执黑：AI 先走
     if (state.mode === 'human_vs_ai' && state.controller && state.controller !== 'human') {
-      await runAiStep({ nested: true });
+      await runAiStep({ nested: true, quick: true });
+    } else if (state.mode === 'ai_vs_ai') {
+      // 机机局直接自动连走，无需点「AI 一步」
+      startAuto();
     }
   } finally {
     busy = false;
   }
 }
 
+function queueCouncilRefresh() {
+  if (!$('#with-analysis').is(':checked')) return;
+  if (serverState.mode === 'human_vs_human') return;
+  const gen = ++analysisGen;
+  const analysisMode = $('#analysis-mode').val() || 'fast';
+  $('#ai-meta').text('AI 已走完 · Council 后台分析中…');
+  fetch(`${API}/game/analyze-position`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ with_analysis: true, analysis_mode: analysisMode }),
+  })
+    .then((r) => r.json().then((data) => ({ ok: r.ok, data })))
+    .then(({ ok, data }) => {
+      if (!ok || gen !== analysisGen) return;
+      applyMoveResult({
+        ...data,
+        move: { san: '局面分析', uci: '', number: serverState.move_count || 0 },
+      });
+      $('#ai-meta').text('Council 已更新');
+    })
+    .catch(() => {});
+}
+
 async function runAiStep(opts = {}) {
   const nested = !!opts.nested;
+  const quick = !!opts.quick || autoPlay;
   if (busy && !autoPlay && !nested) return;
   if (serverState.is_game_over) return;
   if (serverState.controller === 'human') return;
 
   busy = true;
-  const useCouncil = $('#with-analysis').is(':checked');
+  const wantCouncil = $('#with-analysis').is(':checked');
+  // 人机自动应着 / 机机连走：先快速落子，Council 异步补，避免干等
+  const useCouncil = wantCouncil && !quick;
   $('#game-status').text(useCouncil ? 'AI + Council…' : 'AI 思考中…');
   if (useCouncil) setProgress('AI 走子与 Council 开会', { cycleCouncil: true });
+  else if (!autoPlay) setProgress('AI 思考中…');
   try {
     const r = await fetch(`${API}/game/ai-step`, {
       method: 'POST',
@@ -1352,6 +1387,9 @@ async function runAiStep(opts = {}) {
       return;
     }
     applyMoveResult(data);
+    if (quick && wantCouncil && !autoPlay && !serverState.is_game_over) {
+      queueCouncilRefresh();
+    }
   } catch (err) {
     console.error(err);
     stopAuto();

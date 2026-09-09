@@ -1867,8 +1867,26 @@ body.page-learn .lib-item .blurb {
 /* board highlights */
 .square-55d63 { cursor: pointer; position: relative; }
 .highlight-selected {
-  box-shadow: inset 0 0 0 4px rgba(210, 176, 106, 0.95) !important;
-  z-index: 2;
+  box-shadow:
+    inset 0 0 0 3px rgba(64, 230, 130, 0.98),
+    0 0 0 2px rgba(64, 230, 130, 0.55),
+    0 0 16px 5px rgba(48, 210, 120, 0.55) !important;
+  z-index: 3;
+  animation: piece-select-glow 1.15s ease-in-out infinite;
+}
+@keyframes piece-select-glow {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 0 3px rgba(64, 230, 130, 0.98),
+      0 0 0 2px rgba(64, 230, 130, 0.5),
+      0 0 14px 4px rgba(48, 210, 120, 0.45);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 3px rgba(90, 255, 150, 1),
+      0 0 0 3px rgba(90, 255, 150, 0.65),
+      0 0 22px 7px rgba(48, 230, 130, 0.7);
+  }
 }
 .highlight-move::after {
   content: "";
@@ -1891,8 +1909,24 @@ body.page-learn .lib-item .blurb {
   background-image: radial-gradient(circle at center, rgba(92, 168, 210, 0.35), transparent 62%) !important;
 }
 
+/* 落子后保留淡绿光：终点更明显，起点更淡 */
+.last-move-from {
+  box-shadow:
+    inset 0 0 0 2px rgba(72, 200, 120, 0.32),
+    0 0 8px 1px rgba(72, 200, 120, 0.16) !important;
+  z-index: 1;
+}
 .last-move-to {
-  box-shadow: inset 0 0 0 4px rgba(210, 176, 106, 0.75) !important;
+  box-shadow:
+    inset 0 0 0 3px rgba(72, 210, 125, 0.55),
+    0 0 0 1px rgba(72, 210, 125, 0.28),
+    0 0 12px 3px rgba(72, 200, 120, 0.28) !important;
+  z-index: 2;
+}
+.highlight-selected.last-move-to,
+.highlight-selected.last-move-from {
+  /* 选中优先于落子淡光 */
+  animation: piece-select-glow 1.15s ease-in-out infinite;
 }
 .jj-origin-dot {
   position: absolute !important;
