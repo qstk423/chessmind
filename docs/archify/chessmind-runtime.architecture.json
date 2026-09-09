@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ChessMind 运行时架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/qstk423/chessmind.git",
+      "revision": "0eaae49a0c6e035e5af7c937510fda22cf1d9749"
+    },
+    "views": [
+      {
+        "id": "move-path",
+        "label": "走子分析主路径",
+        "focus": ["users", "ui", "api", "orch", "board", "engine"],
+        "note": "走子经 FastAPI 进入编排器：先引擎评估与合法走子，再可选多 Agent 分析。"
+      },
+      {
+        "id": "agents",
+        "label": "多 Agent 并行",
+        "focus": ["orch", "features", "agents", "summary", "llm"],
+        "note": "局面接地特征注入战术/战略/开局三师，汇总 Agent 以引擎事实为准融合。"
+      },
+      {
+        "id": "degrade",
+        "label": "无 Key 降级",
+        "focus": ["orch", "engine", "llm", "api"],
+        "note": "未配置 LLM 时仍返回评分、胜率与走子分类；文本分析跳过。"
+      }
+    ]
+  },
+  "components": [
+    { "id": "users", "type": "external", "label": "棋手 / 复盘者", "sublabel": "浏览器", "pos": [40, 300], "size": [140, 64] },
+    { "id": "ui", "type": "frontend", "label": "对弈前端", "sublabel": "棋盘 · 评估条", "pos": [230, 300], "size": [140, 64], "sources": [{ "path": "frontend/index.html", "label": "UI" }] },
+    { "id": "api", "type": "backend", "label": "FastAPI", "sublabel": ":8000 /api", "pos": [430, 300], "size": [140, 64], "sources": [{ "path": "src/main.py", "label": "main" }, { "path": "src/api/routes.py", "label": "routes" }] },
+    { "id": "orch", "type": "backend", "label": "编排器", "sublabel": "走子 · 并行 · 汇总", "pos": [640, 300], "size": [150, 64], "tag": "总控", "sources": [{ "path": "src/orchestrator.py", "label": "orch" }] },
+    { "id": "features", "type": "backend", "label": "局面接地", "sublabel": "子力 · 兵形 · 王安", "pos": [640, 140], "size": [150, 64], "sources": [{ "path": "src/board/position_features.py", "label": "features" }] },
+    { "id": "agents", "type": "backend", "label": "三师 Agent", "sublabel": "战术 · 战略 · 开局", "pos": [860, 140], "size": [150, 64], "sources": [{ "path": "src/agents/tactical.py", "label": "tactical" }] },
+    { "id": "summary", "type": "backend", "label": "汇总 Agent", "sublabel": "融合棋评", "pos": [1070, 140], "size": [140, 64], "sources": [{ "path": "src/agents/summarizer.py", "label": "summary" }] },
+    { "id": "llm", "type": "external", "label": "LLM API", "sublabel": "可选 · OpenAI 兼容", "pos": [1070, 300], "size": [140, 64] },
+    { "id": "board", "type": "backend", "label": "棋规状态", "sublabel": "python-chess", "pos": [640, 460], "size": [150, 64], "sources": [{ "path": "src/board/game_state.py", "label": "game" }] },
+    { "id": "engine", "type": "external", "label": "Stockfish", "sublabel": "深度评估 · PV", "pos": [860, 460], "size": [150, 64], "sources": [{ "path": "src/board/move_evaluator.py", "label": "eval" }] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "ChessMind 本机服务 (localhost:8000)", "wraps": ["ui", "api", "orch", "board", "features", "agents", "summary"] }
+  ],
+  "connections": [
+    { "id": "users-to-ui", "from": "users", "to": "ui", "label": "打开棋盘", "variant": "emphasis", "labelDy": 56, "labelAt": [205, 378] },
+    { "id": "ui-to-api", "from": "ui", "to": "api", "label": "POST /move", "labelDy": 56, "labelAt": [400, 378] },
+    { "id": "api-to-orch", "from": "api", "to": "orch", "label": "分析走子", "variant": "emphasis", "labelDy": 56, "labelAt": [605, 378] },
+    { "id": "orch-to-board", "from": "orch", "to": "board", "label": "执行校验", "fromSide": "bottom", "toSide": "top", "labelAt": [780, 400] },
+    { "id": "board-to-engine", "from": "board", "to": "engine", "label": "前后评估", "variant": "emphasis", "labelDy": 56, "labelAt": [825, 538] },
+    { "id": "orch-to-features", "from": "orch", "to": "features", "label": "提取事实", "fromSide": "top", "toSide": "bottom", "labelAt": [780, 230] },
+    { "id": "features-to-agents", "from": "features", "to": "agents", "label": "注入提示词" },
+    { "id": "agents-to-summary", "from": "agents", "to": "summary", "label": "三份分析" },
+    { "id": "agents-to-llm", "from": "agents", "to": "llm", "label": "并行调用", "variant": "dashed", "fromSide": "bottom", "toSide": "left", "via": [[935, 220], [935, 332], [1070, 332]], "labelAt": [960, 280] },
+    { "id": "summary-to-llm", "from": "summary", "to": "llm", "label": "汇总生成", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelAt": [1140, 240] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "主路径", "items": ["走子 → FastAPI → 编排器 → Stockfish 评分与分类", "支持实时对弈与独立 PGN 复盘"] },
+    { "dot": "emerald", "title": "多 Agent", "items": ["战术 / 战略 / 开局并行，汇总以引擎事实为准", "局面接地杜绝 LLM 误读 FEN"] },
+    { "dot": "rose", "title": "降级", "items": ["无 API Key 时仍可用完整引擎功能", "Agent 文本分析自动跳过"] }
+  ]
+}
