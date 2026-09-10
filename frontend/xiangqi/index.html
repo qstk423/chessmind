@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=15">
+  <link rel="stylesheet" href="style.css?v=16">
   <link rel="stylesheet" href="/shared/variant-switch.css">
 </head>
 <body class="page-play" data-page="play">
@@ -49,17 +49,25 @@
         <label class="field" id="ai-side-field">
           <span id="ai-side-label">对手</span>
           <select id="red-ai">
-            <option value="llm" selected>GLM</option>
+            <option value="engine" selected>引擎</option>
+            <option value="llm">GLM</option>
             <option value="qwen">千问</option>
-            <option value="engine">引擎</option>
           </select>
         </label>
         <label class="field" id="ai-strength-field">
           <span>难度</span>
           <select id="ai-strength">
             <option value="easy">入门</option>
-            <option value="normal" selected>普通</option>
-            <option value="hard">强</option>
+            <option value="normal">普通</option>
+            <option value="hard" selected>强</option>
+          </select>
+        </label>
+        <label class="field" id="time-control-field">
+          <span>时限</span>
+          <select id="time-control">
+            <option value="15" selected>15 分钟</option>
+            <option value="10">10 分钟</option>
+            <option value="5">5 分钟</option>
           </select>
         </label>
         <label class="field check">
@@ -82,6 +90,7 @@
       <div class="player-row top">
         <span class="avatar black">将</span>
         <div><strong id="top-name">黑方</strong><small id="top-state">等待</small></div>
+        <span class="clock" id="top-clock">15:00</span>
         <span class="check-badge" id="check-badge" hidden>将军</span>
       </div>
 
@@ -96,6 +105,7 @@
       <div class="player-row">
         <span class="avatar red">帅</span>
         <div><strong id="bottom-name">红方</strong><small id="bottom-state">轮到你走</small></div>
+        <span class="clock" id="bottom-clock">15:00</span>
       </div>
 
       <div class="board-controls">
@@ -232,6 +242,6 @@
 </div>
 
 <script src="/shared/variant-switch.js"></script>
-  <script src="app.js?v=20"></script>
+  <script src="app.js?v=24"></script>
 </body>
 </html>

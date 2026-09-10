@@ -103,8 +103,8 @@ def _ensure_engine() -> subprocess.Popen[str]:
     _proc.stdin.flush()
     _read_until(_proc, "uciok")
     # EvalFile 默认相对 cwd 的 pikafish.nnue，cwd 已指向引擎目录
-    _proc.stdin.write("setoption name Threads value 1\n")
-    _proc.stdin.write("setoption name Hash value 64\n")
+    _proc.stdin.write("setoption name Threads value 2\n")
+    _proc.stdin.write("setoption name Hash value 128\n")
     _proc.stdin.write("isready\n")
     _proc.stdin.flush()
     _read_until(_proc, "readyok")
@@ -116,7 +116,7 @@ def _ensure_engine() -> subprocess.Popen[str]:
 def best_move_pikafish(
     fen: str,
     *,
-    depth: int = 14,
+    depth: int = 18,
     movetime_ms: int | None = None,
 ) -> str | None:
     """同步问引擎最佳着法；失败返回 None。"""
@@ -132,11 +132,20 @@ def best_move_pikafish(
             proc.stdin.write(f"position fen {fen_cmd}\n")
             # 用 movetime 保证响应上限，避免深搜拖死 API
             if movetime_ms is None:
-                movetime_ms = {8: 200, 14: 600, 18: 1200}.get(int(depth), 500)
+                movetime_ms = {
+                    8: 200,
+                    10: 350,
+                    12: 400,
+                    14: 600,
+                    16: 700,
+                    18: 900,
+                    20: 1200,
+                    22: 1600,
+                }.get(int(depth), max(500, int(depth) * 50))
             proc.stdin.write(f"go movetime {int(movetime_ms)}\n")
             proc.stdin.flush()
             best: str | None = None
-            deadline = time.monotonic() + max(3.0, movetime_ms / 1000.0 + 2.0)
+            deadline = time.monotonic() + max(3.0, movetime_ms / 1000.0 + 2.5)
             while time.monotonic() < deadline:
                 line = proc.stdout.readline()
                 if not line:

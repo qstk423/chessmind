@@ -25,6 +25,8 @@ let selected = null;
 let legalUci = [];
 let highlights = [];
 let lastMove = null;
+let hangingSquares = []; // [[row,col], ...] 可吃且未保护的敌子（绿）
+let threatenedSquares = []; // 己方将被吃且未保护的子（红）
 let flipped = false;
 let busy = false;
 let inCheck = false;
@@ -33,7 +35,7 @@ let gameResult = '';
 let boardTipTimer = null;
 let mode = 'human_vs_ai';
 let humanColor = 'red';
-let redAi = 'llm';
+let redAi = 'engine';
 let autoPlay = false;
 let autoTimer = null;
 let online = { active: false, roomId: null, token: null, color: null, ws: null };
@@ -42,9 +44,22 @@ let verdictUci = null;
 let libraryScript = null;
 let challengeState = { active: false, id: null, level: null, title: '', goal: '', humanColor: 'red' };
 let activePuzzleId = null;
-let cursorSquare = { row: 9, col: 4 };
+let cursorSquare = null; // 仅键盘导航时出现，默认不画虚线
+let cursorVisible = false;
 let lastFinaleKey = null;
 const CHALLENGE_STORAGE_KEY = 'xq_challenge_cleared_v1';
+
+// 对局时钟（毫秒）
+let clock = {
+  limitMs: 15 * 60 * 1000,
+  redMs: 15 * 60 * 1000,
+  blackMs: 15 * 60 * 1000,
+  running: false,
+  active: null, // 'red' | 'black' | null
+  lastTick: 0,
+  timedOut: false,
+};
+let clockTimer = null;
 
 function getClearedChallenges() {
   try {
@@ -134,10 +149,11 @@ function drawBoard() {
   ctx.fillText(flipped ? '漢界' : '楚河', padX + cellX * 2, padY + cellY * 4.5);
   ctx.fillText(flipped ? '楚河' : '漢界', padX + cellX * 6, padY + cellY * 4.5);
 
-  if (cursorSquare && document.activeElement === canvas) {
+  // 不再默认在将/帅上画键盘虚线；仅键盘导航且显式开启时显示
+  if (cursorVisible && cursorSquare && document.activeElement === canvas) {
     const p = screenPoint(cursorSquare.row, cursorSquare.col);
-    ctx.strokeStyle = 'rgba(30, 90, 160, .9)';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(30, 90, 160, .75)';
+    ctx.lineWidth = 2;
     ctx.setLineDash([6, 4]);
     ctx.beginPath();
     ctx.arc(padX + p.col * cellX, padY + p.row * cellY, Math.min(cellX, cellY) * 0.46, 0, Math.PI * 2);
@@ -226,7 +242,42 @@ function drawPieceRing(row, col, { active = false } = {}) {
   ctx.restore();
 }
 
+function drawThreatRings(squares, { color, glow } = {}) {
+  if (!squares.length) return;
+  const { padX, padY, cellX, cellY } = metrics();
+  const base = Math.min(cellX, cellY);
+  for (const pos of squares) {
+    const row = Array.isArray(pos) ? pos[0] : pos.row;
+    const col = Array.isArray(pos) ? pos[1] : pos.col;
+    const p = screenPoint(row, col);
+    const x = padX + p.col * cellX;
+    const y = padY + p.row * cellY;
+    ctx.save();
+    ctx.shadowColor = glow;
+    ctx.shadowBlur = 12;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(3, base * 0.04);
+    ctx.beginPath();
+    ctx.arc(x, y, base * 0.47, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawHangingGlows() {
+  // 绿：可白吃的敌子；红：己方悬子
+  drawThreatRings(hangingSquares, {
+    color: 'rgba(56, 200, 110, 0.9)',
+    glow: 'rgba(48, 210, 120, 0.55)',
+  });
+  drawThreatRings(threatenedSquares, {
+    color: 'rgba(220, 72, 72, 0.95)',
+    glow: 'rgba(220, 60, 60, 0.55)',
+  });
+}
+
 function drawMoveGlows() {
+  drawHangingGlows();
   if (lastMove) {
     const [fr, fc] = lastMove.from;
     const [tr, tc] = lastMove.to;
@@ -256,6 +307,129 @@ function renderBoard() {
   drawBoard();
   drawPieces();
   drawMoveGlows();
+}
+
+function formatClock(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function readTimeControlMs() {
+  const mins = parseInt(document.getElementById('time-control')?.value || '15', 10);
+  const safe = [5, 10, 15].includes(mins) ? mins : 15;
+  return safe * 60 * 1000;
+}
+
+function resetClocks() {
+  clock.limitMs = readTimeControlMs();
+  clock.redMs = clock.limitMs;
+  clock.blackMs = clock.limitMs;
+  clock.running = false;
+  clock.active = null;
+  clock.lastTick = 0;
+  clock.timedOut = false;
+  if (clockTimer) {
+    clearInterval(clockTimer);
+    clockTimer = null;
+  }
+  paintClocks();
+}
+
+function paintClocks() {
+  const topIsBlack = !flipped;
+  const topColor = topIsBlack ? 'black' : 'red';
+  const bottomColor = topIsBlack ? 'red' : 'black';
+  const topEl = document.getElementById('top-clock');
+  const bottomEl = document.getElementById('bottom-clock');
+  const topMs = topColor === 'red' ? clock.redMs : clock.blackMs;
+  const bottomMs = bottomColor === 'red' ? clock.redMs : clock.blackMs;
+  if (topEl) {
+    topEl.textContent = formatClock(topMs);
+    topEl.classList.toggle('is-active', clock.running && clock.active === topColor);
+    topEl.classList.toggle('is-low', topMs <= 60_000);
+  }
+  if (bottomEl) {
+    bottomEl.textContent = formatClock(bottomMs);
+    bottomEl.classList.toggle('is-active', clock.running && clock.active === bottomColor);
+    bottomEl.classList.toggle('is-low', bottomMs <= 60_000);
+  }
+}
+
+function stopClock() {
+  if (clock.running && clock.active && clock.lastTick) {
+    const elapsed = Date.now() - clock.lastTick;
+    if (clock.active === 'red') clock.redMs = Math.max(0, clock.redMs - elapsed);
+    else if (clock.active === 'black') clock.blackMs = Math.max(0, clock.blackMs - elapsed);
+  }
+  clock.running = false;
+  clock.active = null;
+  clock.lastTick = 0;
+  if (clockTimer) {
+    clearInterval(clockTimer);
+    clockTimer = null;
+  }
+  paintClocks();
+}
+
+async function handleTimeout(loser) {
+  if (clock.timedOut || isGameOver || online.active) return;
+  clock.timedOut = true;
+  stopClock();
+  try {
+    const state = await api('/game/timeout', {
+      method: 'POST',
+      body: JSON.stringify({ color: loser }),
+    });
+    applyState(state);
+  } catch (err) {
+    console.error(err);
+    isGameOver = true;
+    gameResult = `${loser === 'red' ? '黑方' : '红方'}胜 · 超时`;
+    maybeShowFinale({ is_game_over: true, result: gameResult });
+  }
+}
+
+function tickClock() {
+  if (!clock.running || !clock.active || isGameOver || clock.timedOut) return;
+  const now = Date.now();
+  const elapsed = now - clock.lastTick;
+  clock.lastTick = now;
+  if (clock.active === 'red') clock.redMs -= elapsed;
+  else clock.blackMs -= elapsed;
+  if (clock.redMs <= 0) {
+    clock.redMs = 0;
+    paintClocks();
+    handleTimeout('red');
+    return;
+  }
+  if (clock.blackMs <= 0) {
+    clock.blackMs = 0;
+    paintClocks();
+    handleTimeout('black');
+    return;
+  }
+  paintClocks();
+}
+
+function syncClockToTurn(state) {
+  if (online.active || studyLocked() || state?.is_game_over || state?.result) {
+    stopClock();
+    return;
+  }
+  const side = state?.turn || turn;
+  if (!side) return;
+  if (clock.running && clock.active && clock.active !== side && clock.lastTick) {
+    const elapsed = Date.now() - clock.lastTick;
+    if (clock.active === 'red') clock.redMs = Math.max(0, clock.redMs - elapsed);
+    else clock.blackMs = Math.max(0, clock.blackMs - elapsed);
+  }
+  clock.active = side;
+  clock.running = true;
+  clock.lastTick = Date.now();
+  if (!clockTimer) clockTimer = setInterval(tickClock, 200);
+  paintClocks();
 }
 
 function setStatus(state) {
@@ -357,6 +531,8 @@ function applyState(state) {
   board = state.board || parseBoardFromFen(state.fen);
   turn = state.turn;
   legalUci = state.legal_uci || [];
+  hangingSquares = state.hanging || [];
+  threatenedSquares = state.threatened || [];
   const moves = state.moves || [];
   lastMove = moves.length
     ? { from: moves[moves.length - 1].from, to: moves[moves.length - 1].to }
@@ -368,6 +544,7 @@ function applyState(state) {
   updateScriptBar(state.library);
   maybeClearChallenge(state);
   maybeShowFinale(state);
+  syncClockToTurn(state);
   return state;
 }
 
@@ -392,6 +569,9 @@ function inferFinale(state) {
   }
   if (result.includes('长将')) {
     return { id: 'perpetual', title: '长将负', subtitle: 'Perpetual Check', blurb: result, winner };
+  }
+  if (result.includes('超时')) {
+    return { id: 'timeout', title: '超时判负', subtitle: 'Timeout', blurb: result, winner };
   }
   return {
     id: 'checkmate',
@@ -797,6 +977,8 @@ function wireTabKeyboard() {
 }
 
 function moveCursor(dRow, dCol) {
+  if (!cursorSquare) cursorSquare = { row: 9, col: 4 };
+  cursorVisible = true;
   let row = cursorSquare.row + dRow;
   let col = cursorSquare.col + dCol;
   row = Math.max(0, Math.min(9, row));
@@ -806,6 +988,7 @@ function moveCursor(dRow, dCol) {
 }
 
 async function activateCursorSquare() {
+  if (!cursorSquare) return;
   const stateTurn = turn;
   const may = online.active ? online.color === stateTurn : (mode === 'human_vs_ai' ? stateTurn === humanColor : mode !== 'ai_vs_ai');
   if (!may || busy) return;
@@ -872,6 +1055,7 @@ function wireBoardKeyboard() {
     if (ev.key === 'Escape') {
       selected = null;
       highlights = [];
+      cursorVisible = false;
       renderBoard();
     }
   });
@@ -1263,6 +1447,7 @@ async function newGame() {
   clearStudyState();
   hideFinale();
   stopAuto();
+  resetClocks();
   lastFinaleKey = null;
   const section = document.getElementById('review-section');
   if (section) {

@@ -41,8 +41,13 @@ _CENTER = [2, 4, 8, 10, 12, 10, 8, 4, 2]
 
 Strength = Literal["easy", "normal", "hard"]
 
-STRENGTH_DEPTH = {"easy": 2, "normal": 4, "hard": 5}
-STRENGTH_NODES = {"easy": 24, "normal": 48, "hard": 72}
+# 内建只作 Pikafish 失败兜底，必须够快；强度主要靠引擎思考时间
+STRENGTH_DEPTH = {"easy": 1, "normal": 2, "hard": 3}
+STRENGTH_NODES = {"easy": 12, "normal": 20, "hard": 28}
+STRENGTH_NODE_BUDGET = {"easy": 2_500, "normal": 8_000, "hard": 20_000}
+# Pikafish：思考时间（毫秒）——真正拉开强度
+PIKAFISH_DEPTH = {"easy": 12, "normal": 18, "hard": 22}
+PIKAFISH_MOVETIME_MS = {"easy": 350, "normal": 800, "hard": 1400}
 
 # 开局库：局面键（布局+行棋方）→ 候选 UCI。刻意避开早期无保护「炮打马」。
 _OPENING_BOOK: dict[str, list[str]] = {
@@ -130,21 +135,45 @@ def _is_safe_capture(game: XiangqiGame, mv: Move) -> bool:
     return cap_val > my_val
 
 
-def _order(game: XiangqiGame, moves: list[Move]) -> list[Move]:
+def _retracts_own_last(game: XiangqiGame, mv: Move) -> bool:
+    """是否把己方上一手原路退回（典型「走一步又走回去」）。"""
+    for e in reversed(game.history):
+        if e.get("color") != game.turn:
+            continue
+        prev_from = e.get("from")
+        prev_to = e.get("to")
+        if not prev_from or not prev_to:
+            return False
+        return [mv.fr, mv.fc] == list(prev_to) and [mv.tr, mv.tc] == list(prev_from)
+    return False
+
+
+def _is_null_retract(game: XiangqiGame, mv: Move) -> bool:
+    """无吃子的原路退回——几乎总是废棋（根节点过滤用）。"""
+    if not _retracts_own_last(game, mv):
+        return False
+    return not bool(game.board[mv.tr][mv.tc])
+
+
+def _order(game: XiangqiGame, moves: list[Move], *, deep: bool = False) -> list[Move]:
     scored: list[tuple[int, Move]] = []
     for mv in moves:
         score = _capture_value(game.board, mv) * 10
         score += 6 - abs(mv.tc - 4)
         if game.board[mv.tr][mv.tc]:
-            if not _is_safe_capture(game, mv):
+            if deep and not _is_safe_capture(game, mv):
                 score -= 350  # 惩罚开局式「炮打马」被反吃
             else:
                 score += 80
-        # 将军加分
-        game.play_uci(mv.uci)
-        if in_check(game.board, game.turn):
-            score += 55
-        game.undo()
+        # 深排序才探测将军（搜索树里太贵）
+        if deep:
+            game.play_uci(mv.uci)
+            if in_check(game.board, game.turn):
+                score += 55
+            game.undo()
+        # 廉价惩罚原路退回，避免浅搜来回晃
+        if _retracts_own_last(game, mv):
+            score -= 180 if game.board[mv.tr][mv.tc] else 700
         scored.append((score, mv))
     scored.sort(key=lambda x: x[0], reverse=True)
     return [m for _, m in scored]
@@ -258,21 +287,29 @@ def choose_move_builtin(game: XiangqiGame, *, strength: Strength = "normal") -> 
     if book:
         return book
 
-    depth = STRENGTH_DEPTH.get(strength, 4)
-    widen = STRENGTH_NODES.get(strength, 48)
-    moves = _order(game, legal_moves(game.board, game.turn))[:widen]
+    depth = STRENGTH_DEPTH.get(strength, 5)
+    widen = STRENGTH_NODES.get(strength, 64)
+    # 根节点用廉价排序即可；深探测会拖到数秒
+    ordered = _order(game, legal_moves(game.board, game.turn), deep=False)
+    # 有其它着法时，根节点先丢掉无意义原路退回
+    non_retract = [mv for mv in ordered if not _is_null_retract(game, mv)]
+    pool = non_retract or ordered
+    moves = pool[:widen]
     if not moves:
         return None
 
     maximizing = game.turn == "red"
     best_score = -10**9 if maximizing else 10**9
     best: list[str] = []
-    node_budget = [12_000 if strength == "easy" else (40_000 if strength == "normal" else 90_000)]
+    node_budget = [STRENGTH_NODE_BUDGET.get(strength, 90_000)]
 
     for mv in moves:
         game.play_uci(mv.uci)
         score = _search(game, max(0, depth - 1), -10**9, 10**9, not maximizing, node_budget)
         game.undo()
+        # 根着再扣一次，防止同分随机抽到退回着
+        if _is_null_retract(game, mv):
+            score += -900 if maximizing else 900
         if maximizing:
             if score > best_score:
                 best_score = score
@@ -285,6 +322,11 @@ def choose_move_builtin(game: XiangqiGame, *, strength: Strength = "normal") -> 
                 best = [mv.uci]
             elif score == best_score:
                 best.append(mv.uci)
+    # 同分优先不退回
+    if len(best) > 1:
+        filtered = [u for u in best if not _is_null_retract(game, Move.from_uci(u))]
+        if filtered:
+            best = filtered
     return random.choice(best) if best else moves[0].uci
 
 
@@ -309,10 +351,13 @@ def choose_move(
         from src.xiangqi.engine import best_move_pikafish, pikafish_available
 
         if pikafish_available():
-            eng_depth = {"easy": 8, "normal": 14, "hard": 18}[level]
-            mv = best_move_pikafish(game.fen(), depth=eng_depth)
+            eng_depth = PIKAFISH_DEPTH[level]
+            movetime = PIKAFISH_MOVETIME_MS[level]
+            mv = best_move_pikafish(game.fen(), depth=eng_depth, movetime_ms=movetime)
             if mv and is_legal(game.board, Move.from_uci(mv), game.turn):
-                return mv
+                # 引擎若给出无意义退回，再搜一档内建兜底
+                if not _is_null_retract(game, Move.from_uci(mv)):
+                    return mv
     except Exception:
         pass
 
@@ -373,6 +418,16 @@ async def choose_move_for_side(
             uci = pick.get("uci")
             legal = {mv.uci for mv in legal_moves(game.board, game.turn)}
             if uci and uci in legal:
+                # 模型爱「走一步再走回去」：无意义退回直接改用引擎
+                if _is_null_retract(game, Move.from_uci(uci)):
+                    eng = choose_move(game, depth=depth, strength=strength)
+                    if eng:
+                        return {
+                            "uci": eng,
+                            "source": "engine_fallback",
+                            "reason": f"{ai_side} 选了原路退回，改用引擎",
+                            "controller": ai_side,
+                        }
                 return {
                     "uci": uci,
                     "source": ai_side,

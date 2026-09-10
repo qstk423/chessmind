@@ -14,6 +14,7 @@ from src.xiangqi.rules import (
     color_of,
     evaluate_material,
     in_check,
+    is_defended,
     legal_moves,
     move_san,
 )
@@ -44,7 +45,7 @@ def _hanging_penalty(game: XiangqiGame, color: str) -> int:
             p = game.board[r][c]
             if color_of(p) != color or p.lower() == "k":
                 continue
-            if (r, c) in enemy_targets:
+            if (r, c) in enemy_targets and not is_defended(game.board, color, r, c):
                 penalty += PIECE_VALUE.get(p.lower(), 0) // 2
     return penalty
 

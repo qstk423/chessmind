@@ -240,6 +240,19 @@ def attacks_square(board, color: str, tr: int, tc: int) -> bool:
     return False
 
 
+def is_defended(board, color: str, tr: int, tc: int) -> bool:
+    """color 方是否看住 (tr,tc)（可反吃）。
+
+    pseudo_legal 不能指向己方子，所以临时换成对方子再测攻击。
+    """
+    saved = board[tr][tc]
+    board[tr][tc] = "P" if color == "black" else "p"
+    try:
+        return attacks_square(board, color, tr, tc)
+    finally:
+        board[tr][tc] = saved
+
+
 def in_check(board, color: str) -> bool:
     king = find_king(board, color)
     if not king:
@@ -283,6 +296,49 @@ def legal_targets(board, turn: str, fr: int, fc: int) -> list[tuple[int, int]]:
     for mv in legal_moves(board, turn):
         if mv.fr == fr and mv.fc == fc:
             out.append((mv.tr, mv.tc))
+    return out
+
+
+def hanging_captures(board, turn: str) -> list[tuple[int, int]]:
+    """当前方能吃到、且对方未保护的敌子坐标（不含将/帅）。"""
+    enemy = "black" if turn == "red" else "red"
+    seen: set[tuple[int, int]] = set()
+    out: list[tuple[int, int]] = []
+    for mv in legal_moves(board, turn):
+        cap = board[mv.tr][mv.tc]
+        if not cap or color_of(cap) != enemy:
+            continue
+        if (cap or "").lower() == "k":
+            continue
+        key = (mv.tr, mv.tc)
+        if key in seen:
+            continue
+        seen.add(key)
+        # 对方若看住该格，视为受保护（可反吃）
+        if is_defended(board, enemy, mv.tr, mv.tc):
+            continue
+        out.append(key)
+    return out
+
+
+def hanging_own(board, turn: str) -> list[tuple[int, int]]:
+    """己方被对方能吃到、且己方未保护的子（不含将/帅）。"""
+    enemy = "black" if turn == "red" else "red"
+    seen: set[tuple[int, int]] = set()
+    out: list[tuple[int, int]] = []
+    for mv in legal_moves(board, enemy):
+        cap = board[mv.tr][mv.tc]
+        if not cap or color_of(cap) != turn:
+            continue
+        if (cap or "").lower() == "k":
+            continue
+        key = (mv.tr, mv.tc)
+        if key in seen:
+            continue
+        seen.add(key)
+        if is_defended(board, turn, mv.tr, mv.tc):
+            continue
+        out.append(key)
     return out
 
 
@@ -334,6 +390,8 @@ class XiangqiGame:
 
     def snapshot(self) -> dict:
         moves = legal_moves(self.board, self.turn) if not self.result else []
+        hanging = hanging_captures(self.board, self.turn) if not self.result else []
+        threatened = hanging_own(self.board, self.turn) if not self.result else []
         return {
             "fen": self.fen(),
             "turn": self.turn,
@@ -343,6 +401,8 @@ class XiangqiGame:
             "move_count": len(self.history),
             "moves": deepcopy(self.history),
             "legal_uci": [m.uci for m in moves],
+            "hanging": [[r, c] for r, c in hanging],
+            "threatened": [[r, c] for r, c in threatened],
             "board": deepcopy(self.board),
         }
 
@@ -441,6 +501,17 @@ class XiangqiGame:
             return
 
         self.result = None
+
+    def end_by(self, loser: str, reason: str = "认输") -> None:
+        """判负：loser 为 red/black。"""
+        side = (loser or "").strip().lower()
+        if side not in ("red", "black"):
+            raise ValueError("颜色错误")
+        if self.result:
+            return
+        winner = "黑方" if side == "red" else "红方"
+        label = (reason or "认输").strip() or "认输"
+        self.result = f"{winner}胜 · {label}"
 
     def targets_for(self, fr: int, fc: int) -> list[str]:
         return [Move(fr, fc, tr, tc).uci[2:] for tr, tc in legal_targets(self.board, self.turn, fr, fc)]

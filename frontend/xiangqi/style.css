@@ -295,8 +295,30 @@ button.accent:hover:not(:disabled) { filter: brightness(1.05); }
 }
 .avatar.red { color: var(--cinnabar-deep); }
 .avatar.black { color: #1d1a18; }
-.check-badge {
+.clock {
   margin-left: auto;
+  min-width: 4.2em;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(20, 12, 10, 0.55);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.95rem;
+  text-align: center;
+}
+.clock.is-active {
+  border-color: rgba(72, 200, 120, 0.55);
+  color: #9eecc0;
+  box-shadow: 0 0 0 1px rgba(72, 200, 120, 0.2);
+}
+.clock.is-low {
+  border-color: rgba(212, 122, 104, 0.65);
+  color: #f0b2a6;
+}
+.check-badge {
+  margin-left: 8px;
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid rgba(212, 122, 104, 0.45);

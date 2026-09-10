@@ -37,6 +37,10 @@ class AnalyzeRequest(BaseModel):
     with_analysis: bool = True
 
 
+class TimeoutRequest(BaseModel):
+    color: str = Field(description="超时方 red/black")
+
+
 class LibraryLoadRequest(BaseModel):
     free_play: bool = False
 
@@ -230,6 +234,26 @@ def undo_move(
     if not last:
         raise HTTPException(400, "没有可悔的棋")
     return _state(game, sid, undone=last)
+
+
+@router.post("/game/timeout")
+def game_timeout(
+    req: TimeoutRequest,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    """超时判负。"""
+    sid, game = _sid(x_session_id, response)
+    if game.result:
+        return _state(game, sid, timed_out=True)
+    color = (req.color or "").strip().lower()
+    if color not in ("red", "black"):
+        raise HTTPException(400, "颜色错误")
+    try:
+        game.end_by(color, "超时")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _state(game, sid, timed_out=True)
 
 
 @router.post("/game/ai-step")
