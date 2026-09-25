@@ -50,6 +50,10 @@ Copy-Item "desktop\README.md" (Join-Path $appDir "README.txt")
 $exe = Join-Path $appDir "ChessCouncil.exe"
 $process = Start-Process -FilePath $exe -ArgumentList "--self-test" -Wait -PassThru
 if ($process.ExitCode -ne 0) {
+    $desktopLog = Join-Path $env:LOCALAPPDATA "ChessCouncil\desktop.log"
+    if (Test-Path $desktopLog) {
+        Get-Content $desktopLog -Tail 80
+    }
     throw "Built application self-test failed. Check %LOCALAPPDATA%\ChessCouncil\desktop.log"
 }
 

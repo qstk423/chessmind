@@ -84,7 +84,9 @@ def start_local_server():
     from src.main import app
 
     server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=port, access_log=False)
+        uvicorn.Config(
+            app, host="127.0.0.1", port=port, access_log=False, log_config=None
+        )
     )
     thread = threading.Thread(
         target=server.run,
