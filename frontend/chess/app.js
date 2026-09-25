@@ -1041,6 +1041,13 @@ function renderDebate(council) {
   if (!council) return '<p class="placeholder">本步未启用 Council</p>';
   const d = council.debate || {};
   const v = council.verdict || {};
+  if (council.disagreement?.level === 'unavailable' || council.disagreement?.level === 'partial') {
+    return `<p>智能体分析未完整完成，未形成三方共识或辩论。</p>
+      <div class="verdict-box">
+        <p><strong>参考着法</strong>：${escapeHtml(v.recommended_move || '—')}</p>
+        ${formatText(v.summary || '')}
+      </div>`;
+  }
   if (!d.triggered) {
     return `
       <p>未触发辩论（争议度不足阈值）。</p>
@@ -1072,12 +1079,18 @@ function updateDisagreement(council) {
     return;
   }
   const dg = council.disagreement;
+  if (dg.level === 'unavailable' || dg.level === 'partial') {
+    $('#dg-fill').css('width', '0%');
+    $('#dg-label').text(dg.label || '智能体分析不可用');
+    resetAgentCompare();
+    return;
+  }
   const pct = Math.round((dg.disagreement_score || 0) * 100);
   $('#dg-fill').css('width', pct + '%');
   const debateOn = !!(council.debate && council.debate.triggered);
-  $('#dg-label').text(
-    `${dg.badge || ''} · 争议 ${pct}%` + (debateOn ? ' · 已开辩论' : '')
-  );
+  $('#dg-label').text(dg.demo_forced
+    ? `路演模式 · 观点不同触发辩论（争议 ${pct}%）`
+    : `${dg.badge || ''} · 争议 ${pct}%` + (debateOn ? ' · 已开辩论' : ''));
 
   const rm = dg.recommended_moves || {};
   const moves = {
@@ -1320,6 +1333,7 @@ async function startNewGame() {
       body: JSON.stringify(newGamePayload()),
     });
     const state = await r.json();
+    if (!r.ok) throw new Error(apiErrorText(state, '新对局创建失败'));
     applyServerState(state);
     resetPanels();
     refreshModeControls();
@@ -1330,6 +1344,9 @@ async function startNewGame() {
       // 机机局直接自动连走，无需点「AI 一步」
       startAuto();
     }
+  } catch (err) {
+    $('#ai-meta').text(`新对局创建失败：${err.message || '请检查服务后重试'}`);
+    stopAuto();
   } finally {
     busy = false;
   }
@@ -1339,6 +1356,7 @@ function queueCouncilRefresh() {
   if (!$('#with-analysis').is(':checked')) return;
   if (serverState.mode === 'human_vs_human') return;
   const gen = ++analysisGen;
+  const sourceFen = game.fen();
   const analysisMode = $('#analysis-mode').val() || 'fast';
   $('#ai-meta').text('AI 已走完 · Council 后台分析中…');
   fetch(`${API}/game/analyze-position`, {
@@ -1348,14 +1366,26 @@ function queueCouncilRefresh() {
   })
     .then((r) => r.json().then((data) => ({ ok: r.ok, data })))
     .then(({ ok, data }) => {
-      if (!ok || gen !== analysisGen) return;
+      if (gen !== analysisGen) return;
+      if (game.fen() !== sourceFen) {
+        $('#ai-meta').text('棋局已变化，已忽略旧局面的分析');
+        return;
+      }
+      if (!ok) {
+        $('#ai-meta').text('Council 分析未完成，请重试');
+        return;
+      }
       applyMoveResult({
         ...data,
         move: { san: '局面分析', uci: '', number: serverState.move_count || 0 },
       });
       $('#ai-meta').text('Council 已更新');
     })
-    .catch(() => {});
+    .catch(() => {
+      if (gen === analysisGen && game.fen() === sourceFen) {
+        $('#ai-meta').text('Council 分析请求失败，请重试');
+      }
+    });
 }
 
 async function runAiStep(opts = {}) {
@@ -1435,6 +1465,7 @@ function startAuto() {
     return;
   }
   stopLibraryAuto();
+  if (autoTimer) clearTimeout(autoTimer);
   autoDelayMs = readPlaybackSpeedMs();
   autoPlay = true;
   syncPlayToggle();
@@ -1834,7 +1865,11 @@ async function runDemoById(demoId, title) {
         $('.tab[data-tab="debate"]').addClass('active');
         $('#tab-debate').addClass('active');
       }
+    } else {
+      $('#ai-meta').text('局面已加载，但分析未返回；请检查模型状态或重试');
     }
+  } catch (err) {
+    $('#ai-meta').text(`Demo 未完成：${err.message || '网络或服务异常，请检查后重试'}`);
   } finally {
     setProgress(null);
     busy = false;
@@ -1857,7 +1892,7 @@ async function loadDemos() {
   }
 }
 
-$('#btn-pitch-demo').click(() => runDemoById('greek_gift', '希腊赠礼（攻王弃象）'));
+$('#btn-pitch-demo').click(() => runDemoById('greek_gift', '中心破局：进攻与王安全'));
 
 $('#btn-pitch-fast').click(async () => {
   if (PAGE !== 'play' || !board) {
@@ -1874,8 +1909,7 @@ $('#btn-pitch-fast').click(async () => {
   autoDelayMs = readPlaybackSpeedMs();
   refreshModeControls();
   await startNewGame();
-  $('#ai-meta').text(`快速对战：Council 已关 · 速度 ${autoDelayMs}ms/步`);
-  startAuto();
+  if (autoPlay) $('#ai-meta').text(`快速对战：Council 已关 · 速度 ${autoDelayMs}ms/步`);
 });
 
 function switchWorkspace(panelId) {
@@ -1896,6 +1930,13 @@ $('#btn-show-logs').click(() => {
   refreshLogs();
   document.getElementById('logs-list')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
+
+function formatLogTime(value) {
+  if (!value) return '时间未知';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 19);
+  return `${date.toLocaleString('zh-CN', { hour12: false })}（本机时间）`;
+}
 
 async function refreshLogs() {
   const box = $('#logs-list');
@@ -1932,7 +1973,7 @@ async function refreshLogs() {
             ? ` · ${row.total_tokens ?? row.usage.total_tokens} tok`
             : '') +
           `</span></div>` +
-          `<div class="meta">${escapeHtml((row.ts || row.timestamp || '').toString().slice(0, 19))}` +
+          `<div class="meta">${escapeHtml(formatLogTime(row.ts || row.timestamp))}` +
           (row.error ? ` · ${escapeHtml(String(row.error).slice(0, 80))}` : '') +
           `</div>`
       );

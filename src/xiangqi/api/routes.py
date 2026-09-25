@@ -217,6 +217,14 @@ def make_move(
     x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ):
     sid, game = _sid(x_session_id, response)
+    settings = sessions.settings_of(sid)
+    if settings.get("mode") != "human_vs_human" and resolve_ai_side(
+        mode=settings.get("mode", "human_vs_human"),
+        turn=game.turn,
+        human_color=settings.get("human_color", "red"),
+        red_ai=_normalize_red_ai(settings.get("red_ai")),
+    ) is not None:
+        raise HTTPException(400, "当前不是人类行棋回合")
     try:
         entry = game.play_uci(req.uci)
     except ValueError as exc:

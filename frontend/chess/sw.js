@@ -1,5 +1,5 @@
 /* ChessCouncil PWA：静态壳可离线；HTML / JS 优先走网络，避免卡在旧版本 */
-const CACHE = 'cc-shell-mapp14';
+const CACHE = 'cc-shell-mapp19';
 const PRECACHE = [
   '/chess/',
   '/chess/index.html',
@@ -7,7 +7,7 @@ const PRECACHE = [
   '/chess/online.html',
   '/chess/tools.html',
   '/chess/style.css?v=mapp8',
-  '/chess/app.js?v=mapp13',
+  '/chess/app.js?v=mapp19',
   '/chess/manifest.webmanifest',
   '/chess/icons/icon-192.png',
   '/chess/icons/icon-512.png',

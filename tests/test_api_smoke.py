@@ -77,8 +77,8 @@ def test_pwa_precaches_current_app_bundle():
         (root / "frontend" / "chess" / name).read_text(encoding="utf-8")
         for name in ("index.html", "learn.html", "online.html", "tools.html")
     )
-    assert "app.js?v=mapp13" in html
-    assert "'/chess/app.js?v=mapp13'" in sw
+    assert "app.js?v=mapp19" in html
+    assert "'/chess/app.js?v=mapp19'" in sw
     assert (root / "frontend" / "xiangqi" / "index.html").is_file()
     assert (root / "frontend" / "shared" / "variant-switch.js").is_file()
     assert 'const API = \'/api/xiangqi\'' in (root / "frontend" / "xiangqi" / "app.js").read_text(

@@ -1,16 +1,16 @@
 """路演 / 高争议 Demo 预设局面。"""
 from __future__ import annotations
 
-# 均为白方行棋。优先选择「攻王弃子 vs 稳健」张力大的局面。
+# 均为白方行棋，选择战术、战略与风险视角容易分化的局面。
 DEMO_PRESETS: dict[str, dict] = {
     "greek_gift": {
         "id": "greek_gift",
-        "title": "希腊赠礼（攻王弃象）",
-        "blurb": "经典 Bxh7+ 攻王抉择：战术想弃象破门，风险倾向稳健。路演首选。",
-        # 白方象在 d3、马在 f3，黑王已易位 —— 典型希腊赠礼结构
+        "title": "中心破局：进攻与王安全",
+        "blurb": "中心张力与王安全并存；比较积极处理中心和稳妥易位的不同思路。路演首选。",
+        # 保留已有 ID 兼容调用；该局面并非有利的 Bxh7+ 弃象战术。
         "fen": "rnbq1rk1/ppp2ppp/3b1n2/3pp3/3P4/2PB1N2/PP3PPP/RNBQK2R w KQ - 0 8",
         "side_to_move": "white",
-        "tags": ["sacrifice", "king_attack", "debate"],
+        "tags": ["center", "king_safety", "debate"],
         "diverge": True,
     },
     "exchange_sac": {

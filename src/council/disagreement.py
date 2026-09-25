@@ -24,6 +24,20 @@ def compute_disagreement(
     """
     agents = [tactical, strategic, risk]
     moves = [_norm_move(a.recommended_move) for a in agents]
+    unavailable = [a.agent for a in agents if not a.parse_ok or a.fallback_reason]
+    if unavailable:
+        all_unavailable = len(unavailable) == len(agents)
+        return {
+            "disagreement_score": None,
+            "consensus_score": None,
+            "level": "unavailable" if all_unavailable else "partial",
+            "label": "智能体分析不可用" if all_unavailable else "部分智能体分析不可用",
+            "badge": "分析不可用" if all_unavailable else "部分降级",
+            "components": None,
+            "recommended_moves": dict(zip(("tactical", "strategic", "risk"), moves)),
+            "unavailable_agents": unavailable,
+            "trigger_debate": False,
+        }
     present = [m for m in moves if m]
     unique = set(present)
 

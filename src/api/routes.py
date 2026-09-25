@@ -211,7 +211,10 @@ async def analyze_position(
     """分析当前局面（不走子），用于 Demo / 识谱后 Council。"""
     orch = _orch(request, response, x_session_id)
     with_analysis = True if req is None else req.with_analysis
-    return await orch.analyze_position(with_analysis=with_analysis)
+    result = await orch.analyze_position(with_analysis=with_analysis)
+    if result.get("stale"):
+        raise HTTPException(status_code=409, detail=result["error"])
+    return result
 
 
 @router.post("/game/post-review")

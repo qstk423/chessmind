@@ -1,0 +1,39 @@
+name: Windows desktop package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/windows-desktop.yml"
+      - "desktop/**"
+      - "scripts/build_windows.ps1"
+      - "requirements*.txt"
+      - "src/**"
+      - "frontend/**"
+      - "tests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-desktop.txt
+      - name: Build and smoke-test Windows app
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChessCouncil-Windows
+          path: dist/ChessCouncil-Windows.zip
+          if-no-files-found: error

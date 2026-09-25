@@ -123,7 +123,8 @@ def consensus_verdict(opinions: dict[str, AgentOpinion], stockfish_info: dict[st
     tac = opinions["tactical"]
     strat = opinions["strategic"]
     risk = opinions["risk"]
-    moves = [normalize_move_token(m) for m in (tac.recommended_move, strat.recommended_move, risk.recommended_move)]
+    valid = [a for a in (tac, strat, risk) if a.parse_ok and not a.fallback_reason]
+    moves = [normalize_move_token(a.recommended_move) for a in valid]
     moves = [m for m in moves if m]
     final = None
     if moves:
@@ -136,16 +137,27 @@ def consensus_verdict(opinions: dict[str, AgentOpinion], stockfish_info: dict[st
     if not final and pv:
         final = normalize_move_token(str(pv[0]))
 
-    conf = round((tac.confidence + strat.confidence + risk.confidence) / 3, 3)
-    risk_avg = round((tac.risk + strat.risk + risk.risk) / 3, 3)
+    conf = round(sum(a.confidence for a in valid) / len(valid), 3) if valid else 0.2
+    risk_avg = round(sum(a.risk for a in valid) / len(valid), 3) if valid else 0.5
     ev = stockfish_info.get("score_cp")
     evaluation = round((ev / 100.0), 2) if isinstance(ev, (int, float)) else round(
         (tac.evaluation + strat.evaluation + risk.evaluation) / 3, 2
     )
-    summary = (
-        f"三方意见基本一致，综合推荐 {final or '（参考引擎）'}。"
-        f"战术：{tac.summary[:60]} 战略：{strat.summary[:60]}"
-    )
+    if len(valid) == 3:
+        summary = (
+            f"三方意见基本一致，综合推荐 {final or '（参考引擎）'}。"
+            f"战术：{tac.summary[:60]} 战略：{strat.summary[:60]}"
+        )
+    elif valid:
+        summary = (
+            "部分智能体分析不可用，未形成完整三方共识。"
+            + (f"参考着法 {final}，仅供参考。" if final else "暂无可靠推荐着法。")
+        )
+    else:
+        summary = (
+            "三方智能体分析均不可用，未形成共识。"
+            + (f"仅可参考引擎着法 {final}。" if final else "当前也没有引擎推荐着法。")
+        )
     return AgentOpinion(
         agent="arbiter",
         recommended_move=final,
@@ -155,11 +167,10 @@ def consensus_verdict(opinions: dict[str, AgentOpinion], stockfish_info: dict[st
         risk=risk_avg,
         summary=summary,
         reasoning_points=[
-            f"战术推荐 {tac.recommended_move}",
-            f"战略推荐 {strat.recommended_move}",
-            f"风险推荐 {risk.recommended_move}",
-            f"引擎 PV：{', '.join(map(str, pv[:3]))}",
+            *(f"{a.agent} 推荐 {a.recommended_move}" for a in valid if a.recommended_move),
+            *([f"引擎 PV：{', '.join(map(str, pv[:3]))}"] if pv else []),
         ],
         concerns=list({*(tac.concerns[:1]), *(risk.concerns[:1])}),
-        parse_ok=True,
+        parse_ok=len(valid) == 3,
+        fallback_reason=None if len(valid) == 3 else "agents_unavailable",
     )

@@ -1,11 +1,16 @@
 # 环境变量（含 API Key，切勿提交）
 .env
+ChessCouncil.env
+config.env
 
 # Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+build/
+dist/
+*.spec
 
 # 编辑器
 .vscode/

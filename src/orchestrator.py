@@ -123,7 +123,8 @@ class ChessMindOrchestrator:
         coach_level: CoachLevel | None = None,
         analysis_mode: AnalysisMode = "fast",
     ) -> dict:
-        self.game.reset()
+        # A loaded FEN becomes GameState.initial; a *new* game must not reuse it.
+        self.game = GameState()
         self.mode = mode
         self.human_color = human_color
         # 未配置千问时，禁止把白方设为 qwen
@@ -297,14 +298,26 @@ class ChessMindOrchestrator:
     async def analyze_position(self, *, with_analysis: bool = True) -> dict:
         """分析当前局面（不走子）——路演 Demo / 识谱后一键 Council。"""
         game = self.game
-        set_context(game_id=self.game_id, move_number=game.move_count)
-        eval_after = await self.evaluator.evaluate(game.fen)
+        source_fen = game.fen
+        source_move_count = game.move_count
+        source_game_id = self.game_id
+        def position_changed() -> bool:
+            return (
+                self.game_id != source_game_id
+                or game.fen != source_fen
+                or game.move_count != source_move_count
+            )
+
+        set_context(game_id=source_game_id, move_number=source_move_count)
+        eval_after = await self.evaluator.evaluate(source_fen)
+        if position_changed():
+            return {"error": "局面已变化，请重新分析", "stale": True}
         grounding = describe_position(game.board, eval_after)
         history = game.get_recent_moves(10)
 
         if with_analysis:
             analysis = await self._run_council(
-                fen=game.fen,
+                fen=source_fen,
                 history=history,
                 grounding=grounding,
                 eval_after=eval_after,
@@ -319,6 +332,9 @@ class ChessMindOrchestrator:
                 "summary": "（跳过）",
                 "council": None,
             }
+
+        if position_changed():
+            return {"error": "局面已变化，请重新分析", "stale": True}
 
         result = {
             "position_only": True,
@@ -498,9 +514,12 @@ class ChessMindOrchestrator:
         opinions = {"tactical": tac_o, "strategic": strat_o, "risk": risk_o}
         disagreement = compute_disagreement(tac_o, strat_o, risk_o)
         # 阈值可配置
-        disagreement["trigger_debate"] = disagreement["disagreement_score"] >= DEBATE_THRESHOLD
+        disagreement["trigger_debate"] = (
+            disagreement["disagreement_score"] is not None
+            and disagreement["disagreement_score"] >= DEBATE_THRESHOLD
+        )
         # 路演 Demo：只要三方推荐不完全一致，就强制进入辩论（保证可演示）
-        if diverge_roles:
+        if diverge_roles and disagreement["level"] not in ("partial", "unavailable"):
             mv = {
                 tac_o.recommended_move,
                 strat_o.recommended_move,
@@ -556,7 +575,10 @@ class ChessMindOrchestrator:
                 "triggered": False,
                 "rounds": [],
                 "verdict": verdict.to_dict(),
-                "skipped_reason": "fast_mode" if mode == "fast" and not diverge_roles else None,
+                "skipped_reason": (
+                    "agents_unavailable" if disagreement["level"] in ("partial", "unavailable")
+                    else "fast_mode" if mode == "fast" and not diverge_roles else None
+                ),
             }
 
         snapshot = (

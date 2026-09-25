@@ -209,6 +209,42 @@ function drawPieces() {
   }
 }
 
+function drawLastMovePath() {
+  if (!lastMove) return;
+  const { padX, padY, cellX, cellY } = metrics();
+  const from = screenPoint(lastMove.from[0], lastMove.from[1]);
+  const to = screenPoint(lastMove.to[0], lastMove.to[1]);
+  const x1 = padX + from.col * cellX;
+  const y1 = padY + from.row * cellY;
+  const x2 = padX + to.col * cellX;
+  const y2 = padY + to.row * cellY;
+  const base = Math.min(cellX, cellY);
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(255, 252, 240, 0.9)';
+  ctx.lineWidth = Math.max(2.5, base * 0.032);
+  ctx.setLineDash([base * 0.1, base * 0.075]);
+  ctx.shadowColor = 'rgba(62, 35, 18, 0.45)';
+  ctx.shadowBlur = 4;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 白色起点让上一手的方向清晰可辨，路径终点由棋子与提示圈共同标识。
+  ctx.shadowBlur = 5;
+  ctx.fillStyle = 'rgba(255, 253, 244, 0.98)';
+  ctx.strokeStyle = 'rgba(92, 53, 28, 0.55)';
+  ctx.lineWidth = Math.max(1.5, base * 0.018);
+  ctx.beginPath();
+  ctx.arc(x1, y1, Math.max(5, base * 0.065), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawPieceRing(row, col, { active = false } = {}) {
   const { padX, padY, cellX, cellY } = metrics();
   const p = screenPoint(row, col);
@@ -279,23 +315,8 @@ function drawHangingGlows() {
 function drawMoveGlows() {
   drawHangingGlows();
   if (lastMove) {
-    const [fr, fc] = lastMove.from;
     const [tr, tc] = lastMove.to;
-    drawPieceRing(fr, fc, { active: false });
     drawPieceRing(tr, tc, { active: false });
-    // 终点略加强：再描一圈更淡的外晕
-    const { padX, padY, cellX, cellY } = metrics();
-    const p = screenPoint(tr, tc);
-    const x = padX + p.col * cellX;
-    const y = padY + p.row * cellY;
-    const base = Math.min(cellX, cellY);
-    ctx.save();
-    ctx.strokeStyle = 'rgba(72, 210, 125, 0.28)';
-    ctx.lineWidth = Math.max(2, base * 0.03);
-    ctx.beginPath();
-    ctx.arc(x, y, base * 0.52, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
   }
   if (selected) {
     drawPieceRing(selected.row, selected.col, { active: true });
@@ -305,6 +326,7 @@ function drawMoveGlows() {
 function renderBoard() {
   if (!canvas) return;
   drawBoard();
+  drawLastMovePath();
   drawPieces();
   drawMoveGlows();
 }
@@ -531,8 +553,14 @@ function applyState(state) {
   board = state.board || parseBoardFromFen(state.fen);
   turn = state.turn;
   legalUci = state.legal_uci || [];
-  hangingSquares = state.hanging || [];
-  threatenedSquares = state.threatened || [];
+  const nextMode = state.mode || mode;
+  const viewerColor = online.active
+    ? online.color
+    : (nextMode === 'human_vs_ai' ? (state.human_color || humanColor) : null);
+  const showPlayerHints = nextMode !== 'ai_vs_ai' && (!viewerColor || state.turn === viewerColor);
+  // 红绿着色是玩家决策提示：对手行棋时收起，避免含义随回合反转。
+  hangingSquares = showPlayerHints ? (state.hanging || []) : [];
+  threatenedSquares = showPlayerHints ? (state.threatened || []) : [];
   const moves = state.moves || [];
   lastMove = moves.length
     ? { from: moves[moves.length - 1].from, to: moves[moves.length - 1].to }

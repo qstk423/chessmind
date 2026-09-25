@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "chesscouncil.db"
+DB_PATH = Path(
+    os.getenv(
+        "CHESSCOUNCIL_DATA_DIR",
+        str(Path(__file__).resolve().parent.parent / "data"),
+    )
+) / "chesscouncil.db"
 
 
 def _connect() -> sqlite3.Connection:

@@ -1,5 +1,8 @@
 # ChessCouncil
 
+Windows 桌面比赛版：双击程序即可在独立窗口中运行，无需手动打开浏览器。
+构建与本地私有模型配置见 [desktop/README.md](desktop/README.md)。
+
 **多智能体辩论式棋类分析与对战系统 —— 国际象棋 + 中国象棋，同一产品壳。**
 
 ChessCouncil 把「算得清楚」和「说得明白」拆开：服务端负责规则、引擎与理事会（Council），Web 客户端负责棋盘交互与结果呈现。
