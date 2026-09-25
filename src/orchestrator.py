@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Literal
 
 import chess
@@ -105,7 +106,9 @@ class ChessMindOrchestrator:
             self._connected = bool(ok)
             if not ok:
                 err = getattr(self.evaluator, "_connect_error", None) or "unknown"
-                print(f"[ChessCouncil] Stockfish 未连接（降级启动）: {err}")
+                logging.getLogger(__name__).warning(
+                    "Stockfish unavailable; starting in degraded mode: %s", err
+                )
 
     def close(self):
         if not self._owns_engine:
