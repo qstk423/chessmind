@@ -1,13 +1,16 @@
 /* ChessCouncil PWA：静态壳可离线；HTML / JS 优先走网络，避免卡在旧版本 */
-const CACHE = 'cc-shell-mapp19';
+const CACHE = 'cc-shell-mapp28';
 const PRECACHE = [
   '/chess/',
   '/chess/index.html',
   '/chess/learn.html',
-  '/chess/online.html',
   '/chess/tools.html',
-  '/chess/style.css?v=mapp8',
-  '/chess/app.js?v=mapp19',
+  '/chess/style.css?v=mac2',
+  '/chess/app.js?v=mapp25',
+  '/shared/check-flash.css?v=2',
+  '/shared/check-flash.js?v=2',
+  '/shared/review-playback.css?v=1',
+  '/shared/review-playback.js?v=1',
   '/chess/manifest.webmanifest',
   '/chess/icons/icon-192.png',
   '/chess/icons/icon-512.png',

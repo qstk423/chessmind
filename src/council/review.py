@@ -207,6 +207,7 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
             "result": game_result or "未开始",
             "total_moves": 0,
             "highlights": [],
+            "mistakes": [],
             "debates": [],
             "classification_counts": {},
             "avg_disagreement": 0.0,
@@ -218,6 +219,7 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
 
     counts: dict[str, int] = {}
     highlights = []
+    mistakes = []
     debates = []
     dg_scores = []
 
@@ -232,6 +234,9 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
         entry = {
             "number": move.get("number"),
             "san": move.get("san"),
+            "uci": move.get("uci"),
+            "fen_before": rec.get("fen_before"),
+            "fen_after": rec.get("fen"),
             "classification": cls,
             "disagreement_score": score,
             "badge": dg.get("badge"),
@@ -240,6 +245,8 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
         }
         if cls in ("brilliant", "great", "mistake", "blunder") or score >= 0.5:
             highlights.append(entry)
+        if cls in ("inaccuracy", "mistake", "blunder"):
+            mistakes.append(entry)
         if (council.get("debate") or {}).get("triggered"):
             debates.append({
                 **entry,
@@ -307,6 +314,7 @@ def build_review(move_records: list[dict[str, Any]], *, game_result: str | None,
         "avg_disagreement": avg_dg,
         "debate_count": len(debates),
         "highlights": highlights,
+        "mistakes": mistakes,
         "debates": debates,
         "narrative": narrative,
         "pgn": pgn,

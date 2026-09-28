@@ -21,6 +21,7 @@ _hits: dict[str, deque[float]] = defaultdict(deque)
 # 真正昂贵的分析路径：严格限流（相对 /api 规范路径）。
 _EXPENSIVE_PREFIXES = (
     "/api/game/analyze-position",
+    "/api/game/analyze-ply",
     "/api/game/post-review",
     "/api/demos/",
     "/api/vision/",
@@ -46,14 +47,6 @@ def _canonical_api_path(path: str) -> str:
 def _bucket(path: str) -> str:
     """按真实功能分桶，避免所有 /api/game/* 互相挤占额度。"""
     canon = _canonical_api_path(path)
-    if canon.startswith("/api/rooms/"):
-        if canon.endswith("/move"):
-            return "rooms:move"
-        if canon.endswith("/reset"):
-            return "rooms:reset"
-        if canon.endswith("/join"):
-            return "rooms:join"
-        return "rooms:state"
     return canon
 
 
@@ -79,7 +72,7 @@ def check_rate_limit(request: Request) -> None:
     now = time.monotonic()
     window = max(1, RATE_LIMIT_WINDOW_SEC)
     base = max(1, RATE_LIMIT_BURST)
-    if canon in _PLAYBACK_PATHS or (canon.startswith("/api/rooms/") and canon.endswith("/move")):
+    if canon in _PLAYBACK_PATHS:
         limit = base * 4
     elif any(canon.startswith(p) for p in _EXPENSIVE_PREFIXES):
         limit = max(1, base // 3)

@@ -9,7 +9,7 @@
   } catch (_) {}
 
   function pageName() {
-    const m = path.match(/\/(index|learn|online|tools)(?:\.html)?\/?$/);
+    const m = path.match(/\/(index|learn|tools)(?:\.html)?\/?$/);
     if (m) return m[1] === 'index' ? 'index.html' : `${m[1]}.html`;
     if (path.endsWith('/xiangqi') || path.endsWith('/xiangqi/') || path.endsWith('/chess') || path.endsWith('/chess/')) {
       return 'index.html';

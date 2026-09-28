@@ -15,8 +15,10 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/chessboard-1.0.0.min.css">
-<link rel="stylesheet" href="style.css?v=mapp10">
+<link rel="stylesheet" href="style.css?v=mac2">
 <link rel="stylesheet" href="/shared/variant-switch.css">
+<link rel="stylesheet" href="/shared/check-flash.css?v=2">
+<link rel="stylesheet" href="/shared/review-playback.css?v=1">
 </head>
 <body class="page-play" data-page="play">
 <div class="app-shell">
@@ -75,26 +77,23 @@
         <label class="field" id="analysis-mode-field">
           <span>分析</span>
           <select id="analysis-mode">
-            <option value="fast" selected>快评</option>
-            <option value="deep">深评</option>
+            <option value="fast" selected>快评（本地即时）</option>
+            <option value="deep">深评（GLM）</option>
           </select>
         </label>
         <button id="btn-new-game" class="accent setup-new" type="button">新对局</button>
       </div>
 
-      <div class="online-bar" id="online-bar" hidden>
-        <div class="online-copy">
-          <strong>联机</strong>
-          <span id="online-status">未加入</span>
-        </div>
-        <div class="online-controls">
-          <button id="btn-room-copy" type="button">复制链接</button>
-          <button id="btn-room-leave" type="button">退出联机</button>
-        </div>
-      </div>
-
       <div class="board-frame">
         <div id="board"></div>
+      </div>
+      <div class="review-playback-bar" id="review-playback-bar" hidden>
+        <span id="review-playback-label" role="status" aria-live="polite"></span>
+        <div class="review-playback-actions">
+          <button id="review-before" type="button">落子前</button>
+          <button id="review-after" type="button">落子后</button>
+          <button id="review-exit" type="button">返回对局</button>
+        </div>
       </div>
 
       <div class="board-controls">
@@ -239,7 +238,6 @@
 <nav class="app-tabbar" aria-label="主导航">
   <a class="tabbar-item is-active" href="index.html" aria-current="page">对弈</a>
   <a class="tabbar-item" href="learn.html">学习</a>
-  <a class="tabbar-item" href="online.html">联机</a>
   <a class="tabbar-item" href="tools.html">工具</a>
 </nav>
 
@@ -270,6 +268,8 @@
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
 <script src="/shared/variant-switch.js"></script>
-<script src="app.js?v=mapp19"></script>
+<script src="/shared/check-flash.js?v=2"></script>
+<script src="/shared/review-playback.js?v=1"></script>
+<script src="app.js?v=mapp25"></script>
 </body>
 </html>

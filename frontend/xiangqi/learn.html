@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=mac2">
   <link rel="stylesheet" href="/shared/variant-switch.css">
 </head>
 <body class="page-learn" data-page="learn">
@@ -27,6 +27,7 @@
   <div class="learn-mode-tabs" role="tablist" aria-label="学习模式">
     <button type="button" class="learn-mode-tab active" role="tab" id="tab-library" data-learn="library" aria-selected="true" aria-controls="learn-library">名局图库</button>
     <button type="button" class="learn-mode-tab" role="tab" id="tab-challenge" data-learn="challenge" aria-selected="false" aria-controls="learn-challenge" tabindex="-1">残局闯关</button>
+    <button type="button" class="learn-mode-tab" role="tab" id="tab-mistakes" data-learn="mistakes" aria-selected="false" aria-controls="learn-mistakes" tabindex="-1">错题本</button>
   </div>
 
   <div id="learn-library" role="tabpanel" aria-labelledby="tab-library">
@@ -45,16 +46,33 @@
     <p class="tool-hint">通关解锁下一关；点开始后进入对弈页。</p>
     <div id="challenge-list" class="challenge-list"></div>
   </div>
+
+  <div id="learn-mistakes" role="tabpanel" aria-labelledby="tab-mistakes" hidden>
+    <section class="mistake-book-head">
+      <div>
+        <h2>把差招变成下一次的好棋</h2>
+        <p>系统会收录你的缓着、漏着和大漏。点开错题，就能把落子前的局面投影回棋盘重新推演。</p>
+      </div>
+      <strong id="mistake-summary" class="mistake-summary">0 道待练</strong>
+    </section>
+    <div class="mistake-filters" role="group" aria-label="错题等级">
+      <button type="button" class="mistake-filter active" data-mistake-class="">全部</button>
+      <button type="button" class="mistake-filter" data-mistake-class="inaccuracy">缓着</button>
+      <button type="button" class="mistake-filter" data-mistake-class="mistake">漏着</button>
+      <button type="button" class="mistake-filter" data-mistake-class="blunder">大漏</button>
+    </div>
+    <p id="mistake-status" class="tool-hint" aria-live="polite"></p>
+    <div id="mistake-list" class="mistake-list"></div>
+  </div>
 </div>
 
 <nav class="app-tabbar" aria-label="主导航">
   <a class="tabbar-item" href="index.html">对弈</a>
   <a class="tabbar-item is-active" href="learn.html" aria-current="page">学习</a>
-  <a class="tabbar-item" href="online.html">联机</a>
   <a class="tabbar-item" href="tools.html">工具</a>
 </nav>
 
 <script src="/shared/variant-switch.js"></script>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=30"></script>
 </body>
 </html>

@@ -91,3 +91,46 @@ def test_changed_position_cannot_save_old_analysis() -> None:
         assert orch.move_analyses == []
 
     asyncio.run(scenario())
+
+
+def test_each_chess_ply_keeps_its_own_council_when_game_advances() -> None:
+    async def scenario() -> None:
+        orch = ChessMindOrchestrator()
+        orch.new_game(mode="human_vs_ai", with_analysis=True)
+        first = orch.game.push_move("e2e4")
+        assert first is not None
+        orch.move_analyses.append({
+            "move": {"number": 1, "san": first.san, "uci": first.uci},
+            "fen": first.fen_after,
+            "evaluation": {"classification": "good"},
+            "analysis": {"council": None},
+        })
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_council(**kwargs):
+            if kwargs["fen"] == first.fen_after:
+                entered.set()
+                await release.wait()
+            return {"summary": kwargs["fen"], "council": {"fen": kwargs["fen"]}}
+
+        orch._run_council = delayed_council
+        task = asyncio.create_task(orch.analyze_ply(1, analysis_mode="fast"))
+        await entered.wait()
+        second = orch.game.push_move("e7e5")
+        assert second is not None
+        orch.move_analyses.append({
+            "move": {"number": 2, "san": second.san, "uci": second.uci},
+            "fen": second.fen_after,
+            "evaluation": {"classification": "good"},
+            "analysis": {"council": None},
+        })
+        release.set()
+        first_result = await task
+        second_result = await orch.analyze_ply(2, analysis_mode="fast")
+        assert first_result["fen"] == first.fen_after
+        assert second_result["fen"] == second.fen_after
+        assert first_result["analysis"]["council"]["fen"] != second_result["analysis"]["council"]["fen"]
+        assert all(item["analysis"]["council"] for item in orch.move_analyses)
+
+    asyncio.run(scenario())

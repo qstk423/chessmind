@@ -20,7 +20,6 @@ CORE_PATHS = (
     "/api/game/state",
     "/api/games",
     "/api/challenges",
-    "/api/rooms",
 )
 
 

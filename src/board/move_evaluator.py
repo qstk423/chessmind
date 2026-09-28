@@ -75,7 +75,10 @@ class MoveEvaluator:
         board = chess.Board(fen)
         if board.is_game_over():
             return None
-        limit = chess.engine.Limit(depth=depth if depth is not None else self.depth)
+        limit = chess.engine.Limit(
+            depth=depth if depth is not None else self.depth,
+            time=self.time_limit,
+        )
         result = self.engine.play(board, limit)
         if result.move is None:
             return None
@@ -116,7 +119,10 @@ class MoveEvaluator:
             }
 
         use_depth = depth if depth is not None else self.depth
-        result = self.engine.analyse(board, chess.engine.Limit(depth=use_depth))
+        result = self.engine.analyse(
+            board,
+            chess.engine.Limit(depth=use_depth, time=self.time_limit),
+        )
         pov = result["score"].white()  # 白方视角的 Cp 或 Mate 对象
 
         if pov.is_mate():

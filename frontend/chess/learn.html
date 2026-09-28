@@ -9,7 +9,7 @@
 <title>学习 · ChessCouncil</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<link rel="stylesheet" href="style.css?v=mapp8">
+<link rel="stylesheet" href="style.css?v=mac2">
 <link rel="stylesheet" href="/shared/variant-switch.css">
 </head>
 <body class="page-learn" data-page="learn">
@@ -27,6 +27,7 @@
   <div class="learn-mode-tabs" role="tablist" aria-label="学习模式">
     <button type="button" class="learn-mode-tab active" role="tab" id="tab-library" data-learn="library" aria-selected="true" aria-controls="learn-library">名局图库</button>
     <button type="button" class="learn-mode-tab" role="tab" id="tab-challenge" data-learn="challenge" aria-selected="false" aria-controls="learn-challenge" tabindex="-1">残局闯关</button>
+    <button type="button" class="learn-mode-tab" role="tab" id="tab-mistakes" data-learn="mistakes" aria-selected="false" aria-controls="learn-mistakes" tabindex="-1">错题本</button>
   </div>
 
   <div id="learn-library" role="tabpanel" aria-labelledby="tab-library">
@@ -46,12 +47,29 @@
     <p id="challenge-hud" class="challenge-hud" hidden></p>
     <div id="challenge-list" class="challenge-list"></div>
   </div>
+
+  <div id="learn-mistakes" role="tabpanel" aria-labelledby="tab-mistakes" hidden>
+    <section class="mistake-book-head">
+      <div>
+        <h2>把差招变成下一次的好棋</h2>
+        <p>缓着、漏着和大漏会自动收录。点开任意错题，即可把落子前的局面投影回棋盘重新推演。</p>
+      </div>
+      <strong id="mistake-summary" class="mistake-summary">0 道待练</strong>
+    </section>
+    <div class="mistake-filters" role="group" aria-label="错题等级">
+      <button type="button" class="mistake-filter active" data-mistake-class="">全部</button>
+      <button type="button" class="mistake-filter" data-mistake-class="inaccuracy">缓着</button>
+      <button type="button" class="mistake-filter" data-mistake-class="mistake">漏着</button>
+      <button type="button" class="mistake-filter" data-mistake-class="blunder">大漏</button>
+    </div>
+    <p id="mistake-status" class="tool-hint" aria-live="polite"></p>
+    <div id="mistake-list" class="mistake-list"></div>
+  </div>
 </div>
 
 <nav class="app-tabbar" aria-label="主导航">
   <a class="tabbar-item" href="index.html">对弈</a>
   <a class="tabbar-item is-active" href="learn.html" aria-current="page">学习</a>
-  <a class="tabbar-item" href="online.html">联机</a>
   <a class="tabbar-item" href="tools.html">工具</a>
 </nav>
 
@@ -59,6 +77,6 @@
 <script src="vendor/chessboard-1.0.0.min.js"></script>
 <script src="vendor/chess-0.10.3.min.js"></script>
 <script src="/shared/variant-switch.js"></script>
-<script src="app.js?v=mapp19"></script>
+<script src="app.js?v=mapp25"></script>
 </body>
 </html>

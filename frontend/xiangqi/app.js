@@ -25,8 +25,10 @@ let selected = null;
 let legalUci = [];
 let highlights = [];
 let lastMove = null;
-let hangingSquares = []; // [[row,col], ...] 可吃且未保护的敌子（绿）
-let threatenedSquares = []; // 己方将被吃且未保护的子（红）
+let hangingSquares = []; // 下方棋手可吃的敌子（绿）
+let threatenedSquares = []; // 下方棋手可能被吃的子（红）
+let threatHintsByColor = null;
+let riskyUci = new Set();
 let flipped = false;
 let busy = false;
 let inCheck = false;
@@ -38,15 +40,23 @@ let humanColor = 'red';
 let redAi = 'engine';
 let autoPlay = false;
 let autoTimer = null;
-let online = { active: false, roomId: null, token: null, color: null, ws: null };
 let lastCouncil = null;
 let verdictUci = null;
+let gameEpoch = 0;
+let positionRevision = 0;
+let councilRequestId = 0;
 let libraryScript = null;
 let challengeState = { active: false, id: null, level: null, title: '', goal: '', humanColor: 'red' };
 let activePuzzleId = null;
 let cursorSquare = null; // 仅键盘导航时出现，默认不画虚线
 let cursorVisible = false;
 let lastFinaleKey = null;
+let reviewHighlights = [];
+let reviewPlayback = null;
+let reviewClockWasRunning = false;
+let moveAnimation = null;
+let lastAppliedFen = null;
+let mistakeProjection = null;
 const CHALLENGE_STORAGE_KEY = 'xq_challenge_cleared_v1';
 
 // 对局时钟（毫秒）
@@ -54,6 +64,7 @@ let clock = {
   limitMs: 15 * 60 * 1000,
   redMs: 15 * 60 * 1000,
   blackMs: 15 * 60 * 1000,
+  started: false,
   running: false,
   active: null, // 'red' | 'black' | null
   lastTick: 0,
@@ -164,13 +175,13 @@ function drawBoard() {
     const p = screenPoint(h.row, h.col);
     const x = padX + p.col * cellX;
     const y = padY + p.row * cellY;
-    if (h.capture) {
-      ctx.strokeStyle = 'rgba(180, 45, 35, .85)';
+    if (h.capture && !h.risk) {
+      ctx.strokeStyle = 'rgba(45, 174, 92, .9)';
       ctx.lineWidth = 4;
       ctx.beginPath();
       ctx.arc(x, y, Math.min(cellX, cellY) * 0.4, 0, Math.PI * 2);
       ctx.stroke();
-    } else {
+    } else if (!h.risk) {
       ctx.fillStyle = 'rgba(45, 110, 70, .55)';
       ctx.beginPath();
       ctx.arc(x, y, 10, 0, Math.PI * 2);
@@ -179,41 +190,45 @@ function drawBoard() {
   }
 }
 
-function drawPieces() {
+function drawPieceAt(piece, x, y, radius) {
+  ctx.shadowColor = 'rgba(0,0,0,.32)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 3;
+  ctx.fillStyle = '#efd39a';
+  ctx.strokeStyle = colorOf(piece) === 'red' ? '#9f372e' : '#292820';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.shadowColor = 'transparent';
+  ctx.fillStyle = colorOf(piece) === 'red' ? '#a5352d' : '#282820';
+  ctx.font = `bold ${Math.round(radius * 1.1)}px STKaiti, KaiTi, serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(LABELS[piece], x, y + 1);
+}
+
+function drawPieces(position = board) {
   const { padX, padY, cellX, cellY } = metrics();
   const radius = Math.min(cellX, cellY) * 0.39;
   for (let row = 0; row < 10; row++) {
     for (let col = 0; col < 9; col++) {
-      const piece = board[row]?.[col];
+      const piece = position[row]?.[col];
       if (!piece) continue;
       const p = screenPoint(row, col);
       const x = padX + p.col * cellX;
       const y = padY + p.row * cellY;
-      ctx.shadowColor = 'rgba(0,0,0,.32)';
-      ctx.shadowBlur = 8;
-      ctx.shadowOffsetY = 3;
-      ctx.fillStyle = '#efd39a';
-      ctx.strokeStyle = colorOf(piece) === 'red' ? '#9f372e' : '#292820';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.shadowColor = 'transparent';
-      ctx.fillStyle = colorOf(piece) === 'red' ? '#a5352d' : '#282820';
-      ctx.font = `bold ${Math.round(radius * 1.1)}px STKaiti, KaiTi, serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(LABELS[piece], x, y + 1);
+      drawPieceAt(piece, x, y, radius);
     }
   }
 }
 
-function drawLastMovePath() {
-  if (!lastMove) return;
+function drawLastMovePath(move = lastMove) {
+  if (!move) return;
   const { padX, padY, cellX, cellY } = metrics();
-  const from = screenPoint(lastMove.from[0], lastMove.from[1]);
-  const to = screenPoint(lastMove.to[0], lastMove.to[1]);
+  const from = screenPoint(move.from[0], move.from[1]);
+  const to = screenPoint(move.to[0], move.to[1]);
   const x1 = padX + from.col * cellX;
   const y1 = padY + from.row * cellY;
   const x2 = padX + to.col * cellX;
@@ -245,7 +260,7 @@ function drawLastMovePath() {
   ctx.restore();
 }
 
-function drawPieceRing(row, col, { active = false } = {}) {
+function drawPieceRing(row, col, { active = false, danger = false } = {}) {
   const { padX, padY, cellX, cellY } = metrics();
   const p = screenPoint(row, col);
   const x = padX + p.col * cellX;
@@ -255,16 +270,16 @@ function drawPieceRing(row, col, { active = false } = {}) {
 
   ctx.save();
   if (active) {
-    ctx.shadowColor = 'rgba(48, 230, 130, 0.9)';
+    ctx.shadowColor = danger ? 'rgba(220, 60, 60, 0.9)' : 'rgba(48, 230, 130, 0.9)';
     ctx.shadowBlur = 18;
-    ctx.strokeStyle = 'rgba(70, 240, 140, 0.98)';
+    ctx.strokeStyle = danger ? 'rgba(230, 70, 70, 0.98)' : 'rgba(70, 240, 140, 0.98)';
     ctx.lineWidth = Math.max(3.5, base * 0.045);
     // 外圈柔光
     ctx.beginPath();
     ctx.arc(x, y, radius + base * 0.04, 0, Math.PI * 2);
     ctx.stroke();
     ctx.shadowBlur = 8;
-    ctx.strokeStyle = 'rgba(180, 255, 200, 0.85)';
+    ctx.strokeStyle = danger ? 'rgba(255, 194, 180, 0.9)' : 'rgba(180, 255, 200, 0.85)';
     ctx.lineWidth = Math.max(2, base * 0.028);
   } else {
     ctx.shadowColor = 'rgba(48, 200, 120, 0.35)';
@@ -301,7 +316,7 @@ function drawThreatRings(squares, { color, glow } = {}) {
 }
 
 function drawHangingGlows() {
-  // 绿：可白吃的敌子；红：己方悬子
+  // 始终站在下方棋手的视角：绿是可吃，红是会被吃。
   drawThreatRings(hangingSquares, {
     color: 'rgba(56, 200, 110, 0.9)',
     glow: 'rgba(48, 210, 120, 0.55)',
@@ -312,23 +327,142 @@ function drawHangingGlows() {
   });
 }
 
+function drawRiskDestinations() {
+  drawThreatRings(highlights.filter(h => h.risk), {
+    color: 'rgba(220, 72, 72, 0.98)',
+    glow: 'rgba(220, 60, 60, 0.6)',
+  });
+}
+
 function drawMoveGlows() {
-  drawHangingGlows();
   if (lastMove) {
     const [tr, tc] = lastMove.to;
     drawPieceRing(tr, tc, { active: false });
   }
+  drawHangingGlows();
+  drawRiskDestinations();
   if (selected) {
-    drawPieceRing(selected.row, selected.col, { active: true });
+    const danger = threatenedSquares.some(([r, c]) => r === selected.row && c === selected.col);
+    drawPieceRing(selected.row, selected.col, { active: true, danger });
   }
+}
+
+function uciProjectionPoints(uci) {
+  if (!uci || uci.length < 4) return null;
+  const point = (sq) => ({ row: 9 - Number(sq[1]), col: sq.charCodeAt(0) - 97 });
+  return { from: point(uci.slice(0, 2)), to: point(uci.slice(2, 4)) };
+}
+
+function drawProjectionRoute(route, color) {
+  if (!route) return;
+  const { padX, padY, cellX, cellY } = metrics();
+  const from = screenPoint(route.from.row, route.from.col);
+  const to = screenPoint(route.to.row, route.to.col);
+  const x1 = padX + from.col * cellX;
+  const y1 = padY + from.row * cellY;
+  const x2 = padX + to.col * cellX;
+  const y2 = padY + to.row * cellY;
+  const base = Math.min(cellX, cellY);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(3, base * 0.04);
+  ctx.lineCap = 'round';
+  ctx.setLineDash([base * 0.12, base * 0.07]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(x2, y2, base * 0.47, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMistakeProjection() {
+  if (!mistakeProjection) return;
+  drawProjectionRoute(uciProjectionPoints(mistakeProjection.playedUci), 'rgba(224, 70, 66, 0.96)');
+  drawProjectionRoute(uciProjectionPoints(mistakeProjection.recommendedUci), 'rgba(54, 205, 116, 0.96)');
 }
 
 function renderBoard() {
   if (!canvas) return;
   drawBoard();
+  if (reviewPlayback) {
+    const after = reviewPlayback.phase === 'after';
+    const move = reviewPlayback.move;
+    drawLastMovePath(after ? move : null);
+    drawPieces(after ? reviewPlayback.afterBoard : reviewPlayback.beforeBoard);
+    if (move?.from && move?.to) {
+      const square = after ? move.to : move.from;
+      drawPieceRing(square[0], square[1], { active: true });
+    }
+    return;
+  }
+  if (moveAnimation) {
+    drawLastMovePath();
+    drawPieces(moveAnimation.beforeBoard);
+    const { padX, padY, cellX, cellY } = metrics();
+    const from = screenPoint(moveAnimation.from.row, moveAnimation.from.col);
+    const to = screenPoint(moveAnimation.to.row, moveAnimation.to.col);
+    const t = moveAnimation.progress;
+    const x = padX + (from.col + (to.col - from.col) * t) * cellX;
+    const y = padY + (from.row + (to.row - from.row) * t) * cellY;
+    drawPieceAt(moveAnimation.piece, x, y, Math.min(cellX, cellY) * 0.39);
+    return;
+  }
   drawLastMovePath();
   drawPieces();
   drawMoveGlows();
+  drawMistakeProjection();
+}
+
+function cancelMoveAnimation() {
+  if (moveAnimation?.frame != null) cancelAnimationFrame(moveAnimation.frame);
+  moveAnimation?.finish?.();
+  moveAnimation = null;
+}
+
+function waitForMoveAnimation() {
+  return moveAnimation?.done || Promise.resolve();
+}
+
+function animateStateMove(previousBoard, move) {
+  if (!canvas || !previousBoard || !move?.from || !move?.to ||
+      window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return false;
+  const [fr, fc] = move.from;
+  const [tr, tc] = move.to;
+  const piece = previousBoard[fr]?.[fc];
+  if (!piece || board[tr]?.[tc] !== piece || board[fr]?.[fc]) return false;
+  const beforeBoard = previousBoard.map((row) => row.slice());
+  beforeBoard[fr][fc] = null;
+  beforeBoard[tr][tc] = null;
+  const animation = {
+    beforeBoard,
+    from: { row: fr, col: fc },
+    to: { row: tr, col: tc },
+    piece,
+    progress: 0,
+    frame: null,
+  };
+  animation.done = new Promise((resolve) => { animation.finish = resolve; });
+  moveAnimation = animation;
+  const started = performance.now();
+  const duration = 190;
+  const step = (now) => {
+    if (moveAnimation !== animation) return;
+    const linear = Math.min(1, (now - started) / duration);
+    animation.progress = 1 - Math.pow(1 - linear, 3);
+    renderBoard();
+    if (linear < 1) animation.frame = requestAnimationFrame(step);
+    else {
+      moveAnimation = null;
+      animation.finish();
+      renderBoard();
+    }
+  };
+  animation.frame = requestAnimationFrame(step);
+  return true;
 }
 
 function formatClock(ms) {
@@ -348,6 +482,7 @@ function resetClocks() {
   clock.limitMs = readTimeControlMs();
   clock.redMs = clock.limitMs;
   clock.blackMs = clock.limitMs;
+  clock.started = false;
   clock.running = false;
   clock.active = null;
   clock.lastTick = 0;
@@ -396,7 +531,7 @@ function stopClock() {
 }
 
 async function handleTimeout(loser) {
-  if (clock.timedOut || isGameOver || online.active) return;
+  if (clock.timedOut || isGameOver) return;
   clock.timedOut = true;
   stopClock();
   try {
@@ -436,9 +571,23 @@ function tickClock() {
 }
 
 function syncClockToTurn(state) {
-  if (online.active || studyLocked() || state?.is_game_over || state?.result) {
+  if (studyLocked() || state?.is_game_over || state?.result) {
     stopClock();
     return;
+  }
+  if (!clock.started) {
+    const moves = Array.isArray(state?.moves) ? state.moves : [];
+    const userHasMoved = mode === 'human_vs_ai'
+      ? moves.some((move) => move?.color === humanColor)
+      : moves.length > 0;
+    if (mode !== 'ai_vs_ai' && !userHasMoved) {
+      clock.running = false;
+      clock.active = null;
+      clock.lastTick = 0;
+      paintClocks();
+      return;
+    }
+    clock.started = true;
   }
   const side = state?.turn || turn;
   if (!side) return;
@@ -550,30 +699,50 @@ function warnIllegalUnderCheck(uci) {
 }
 
 function applyState(state) {
+  reviewPlayer?.close();
+  const previousBoard = board;
+  const previousFen = lastAppliedFen;
+  cancelMoveAnimation();
+  mistakeProjection = null;
+  positionRevision += 1;
   board = state.board || parseBoardFromFen(state.fen);
   turn = state.turn;
   legalUci = state.legal_uci || [];
-  const nextMode = state.mode || mode;
-  const viewerColor = online.active
-    ? online.color
-    : (nextMode === 'human_vs_ai' ? (state.human_color || humanColor) : null);
-  const showPlayerHints = nextMode !== 'ai_vs_ai' && (!viewerColor || state.turn === viewerColor);
-  // 红绿着色是玩家决策提示：对手行棋时收起，避免含义随回合反转。
-  hangingSquares = showPlayerHints ? (state.hanging || []) : [];
-  threatenedSquares = showPlayerHints ? (state.threatened || []) : [];
+  threatHintsByColor = state.threat_hints || null;
+  riskyUci = new Set(state.risky_uci || []);
   const moves = state.moves || [];
+  const move = state.last_move || moves[moves.length - 1];
   lastMove = moves.length
     ? { from: moves[moves.length - 1].from, to: moves[moves.length - 1].to }
     : null;
+  lastAppliedFen = state.fen || null;
   selected = null;
   highlights = [];
   setStatus(state);
-  renderBoard();
+  updateBottomPlayerHints();
+  if (!(move?.fen_before === previousFen && animateStateMove(previousBoard, move))) renderBoard();
+  if (moves.length && state.in_check && !state.is_game_over) {
+    const attacker = state.turn === 'red' ? 'black' : 'red';
+    window.ChessCouncilCheckFlash?.show({
+      attacker,
+      viewer: mode === 'human_vs_ai' ? humanColor : null,
+      key: `${state.fen}|${moves.length}`,
+      variant: 'xiangqi',
+    });
+  }
   updateScriptBar(state.library);
   maybeClearChallenge(state);
   maybeShowFinale(state);
   syncClockToTurn(state);
   return state;
+}
+
+function updateBottomPlayerHints() {
+  const show = mode !== 'ai_vs_ai' && !isGameOver;
+  const bottom = flipped ? 'black' : 'red';
+  const hints = threatHintsByColor?.[bottom];
+  hangingSquares = show ? (hints?.capturable || []) : [];
+  threatenedSquares = show ? (hints?.threatened || []) : [];
 }
 
 function inferFinale(state) {
@@ -620,6 +789,7 @@ function hideFinale() {
 
 function showFinale(finale) {
   if (!finale) return;
+  window.ChessCouncilCheckFlash?.reset();
   const overlay = document.getElementById('finale-overlay');
   const stage = document.querySelector('#finale-overlay .finale-stage');
   if (!overlay || !stage) return;
@@ -823,11 +993,45 @@ function renderEvalCurveChart(curve) {
     </div>`;
 }
 
+const reviewPlayer = window.ChessCouncilReview?.create({
+  canOpen: () => !busy && !moveAnimation,
+  onStart: () => {
+    stopAuto();
+    cancelMoveAnimation();
+    reviewClockWasRunning = clock.running;
+    stopClock();
+    selected = null;
+    highlights = [];
+    hideBoardTip();
+  },
+  render: snapshot => {
+    reviewPlayback = {
+      ...snapshot,
+      beforeBoard: parseBoardFromFen(snapshot.move.fen_before),
+      afterBoard: parseBoardFromFen(snapshot.move.fen_after),
+    };
+    renderBoard();
+  },
+  onExit: () => {
+    reviewPlayback = null;
+    renderBoard();
+    if (reviewClockWasRunning && !isGameOver) syncClockToTurn({ turn });
+    reviewClockWasRunning = false;
+  },
+  controls: '#undo, #hint, #ai-step, #play-toggle, #btn-script-step, #btn-play-verdict, #btn-analyze, .setup-bar select',
+  notify: message => showBoardTip('关键招数回看', message),
+});
+document.getElementById('review-result')?.addEventListener('click', event => {
+  const button = event.target.closest('.review-jump');
+  if (button) reviewPlayer?.open(reviewHighlights[Number(button.dataset.reviewIndex)], button);
+});
+
 async function showReviewFromData(data) {
   if (!data) return;
+  reviewHighlights = data.highlights || [];
   const narr = (data.narrative || []).map((t) => `<li>${escapeHtml(t)}</li>`).join('');
-  const highs = (data.highlights || []).map((h) =>
-    `<li>第${escapeHtml(String(h.number))}步 ${escapeHtml(h.color || '')} ${escapeHtml(h.san)} · ${escapeHtml(h.classification)}${h.note ? ` · ${escapeHtml(h.note)}` : ''}</li>`
+  const highs = reviewHighlights.map((h, index) =>
+    `<li><button type="button" class="review-jump" data-review-index="${index}">第${escapeHtml(String(h.number))}步 ${escapeHtml(h.color || '')} ${escapeHtml(h.san)} · 还原棋盘</button> · ${escapeHtml(h.classification)}${h.note ? ` · ${escapeHtml(h.note)}` : ''}</li>`
   ).join('');
   const section = document.getElementById('review-section');
   const box = document.getElementById('review-result');
@@ -840,7 +1044,7 @@ async function showReviewFromData(data) {
       ${renderAccuracyCard(data.accuracy)}
       ${renderEvalCurveChart(data.eval_curve || [])}
       <p><strong>叙事</strong></p><ul>${narr || '<li>暂无</li>'}</ul>
-      <p><strong>关键局面</strong></p><ul>${highs || '<li>暂无</li>'}</ul>
+      <p><strong>关键招数</strong></p><p class="review-help">点击着法还原落子后的局面，可对照落子前后；不会改变当前对局。</p><ul>${highs || '<li>暂无关键招数</li>'}</ul>
       <pre class="review-pgn">${escapeHtml(data.pgn || '')}</pre>
     </div>`;
   section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -854,9 +1058,32 @@ async function runPostReview() {
 }
 
 async function runReviewOnly() {
-  const data = await api('/game/review');
-  await showReviewFromData(data);
-  return data;
+  const section = document.getElementById('review-section');
+  const box = document.getElementById('review-result');
+  const button = document.getElementById('btn-review');
+  if (section) {
+    section.hidden = false;
+    section.open = true;
+    if (box) box.innerHTML = '<p>正在生成复盘，请稍候…</p>';
+    section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  if (button) {
+    button.disabled = true;
+    button.textContent = '复盘生成中…';
+  }
+  try {
+    const data = await api('/game/review');
+    await showReviewFromData(data);
+    return data;
+  } catch (error) {
+    if (box) box.textContent = `复盘生成失败：${error.message || '请稍后重试'}`;
+    throw error;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = '赛后复盘';
+    }
+  }
 }
 
 function updateScriptBar(library) {
@@ -928,13 +1155,18 @@ function renderOpinion(op, title) {
   if (!op) return `<p class="placeholder">${escapeHtml(title)}暂无数据</p>`;
   const points = (op.reasoning_points || []).map((p) => `<li>${escapeHtml(p)}</li>`).join('');
   const concerns = (op.concerns || []).map((p) => `<li>${escapeHtml(p)}</li>`).join('');
+  const percent = (value) => {
+    if (value == null || value === '') return '—';
+    const number = Number(value);
+    return Number.isFinite(number) ? `${Math.round(Math.max(0, Math.min(1, number)) * 100)}%` : '—';
+  };
   return `
     <div class="agent-card">
       <div class="agent-meta">
         <span>推荐 ${escapeHtml(op.recommended_move || '—')}</span>
-        <span>置信 ${Math.round((op.confidence || 0) * 100)}%</span>
-        <span>风险 ${Math.round((op.risk || 0) * 100)}%</span>
-        <span>评估 ${op.evaluation ?? '—'}</span>
+        <span>置信 ${percent(op.confidence)}</span>
+        <span>风险 ${percent(op.risk)}</span>
+        <span>评估 ${escapeHtml(op.evaluation ?? '—')}</span>
       </div>
       ${formatText(op.summary)}
       ${points ? `<p><strong>要点</strong></p><ul>${points}</ul>` : ''}
@@ -1018,8 +1250,8 @@ function moveCursor(dRow, dCol) {
 async function activateCursorSquare() {
   if (!cursorSquare) return;
   const stateTurn = turn;
-  const may = online.active ? online.color === stateTurn : (mode === 'human_vs_ai' ? stateTurn === humanColor : mode !== 'ai_vs_ai');
-  if (!may || busy) return;
+  const may = mode === 'human_vs_ai' ? stateTurn === humanColor : mode !== 'ai_vs_ai';
+  if (!may || busy || moveAnimation || reviewPlayback) return;
   const point = { ...cursorSquare };
   const piece = board[point.row]?.[point.col];
   if (!selected) {
@@ -1177,7 +1409,7 @@ function applyCouncil(council) {
 
   verdictUci = council?.verdict?.uci || council?.agents?.coach?.uci || null;
   const playBtn = document.getElementById('btn-play-verdict');
-  if (playBtn) playBtn.disabled = !verdictUci || online.active;
+  if (playBtn) playBtn.disabled = !verdictUci;
 
   const note = document.getElementById('council-note');
   if (note && council?.agents?.coach?.takeaway) {
@@ -1187,7 +1419,36 @@ function applyCouncil(council) {
   activateTab(council?.debate?.triggered ? 'debate' : 'summary');
 }
 
+function resetCouncilPanel() {
+  councilRequestId += 1;
+  lastCouncil = null;
+  verdictUci = null;
+  document.getElementById('eval-red').style.height = '50%';
+  document.getElementById('eval-black').style.height = '50%';
+  document.getElementById('red-prob').textContent = '红 50%';
+  document.getElementById('black-prob').textContent = '黑 50%';
+  const moveClass = document.getElementById('move-class');
+  moveClass.textContent = '走棋后查看本步分析';
+  moveClass.classList.remove('is-mate-threat', 'is-check-threat');
+  document.getElementById('council-status').textContent = '待命';
+  updateDisagreement(null);
+  document.getElementById('tab-summary').innerHTML = '<p class="placeholder">走棋后查看本步要点</p>';
+  document.getElementById('tab-tactical').innerHTML = '<p class="placeholder">攻杀分析待命</p>';
+  document.getElementById('tab-strategic').innerHTML = '<p class="placeholder">局势分析待命</p>';
+  document.getElementById('tab-risk').innerHTML = '<p class="placeholder">风险分析待命</p>';
+  document.getElementById('tab-debate').innerHTML = '<p class="placeholder">尚未触发辩论</p>';
+  document.getElementById('btn-play-verdict').disabled = true;
+  const analyzeBtn = document.getElementById('btn-analyze');
+  analyzeBtn.disabled = false;
+  analyzeBtn.textContent = '分析局面';
+  document.getElementById('council-note').textContent = '新对局已就绪，走棋后可查看理事会分析。';
+  document.querySelectorAll('.dg-card').forEach((card) => { card.dataset.armed = ''; });
+  activateTab('summary');
+}
+
 async function runCouncilAnalyze({ silent = false } = {}) {
+  const requestId = ++councilRequestId;
+  const revision = positionRevision;
   const btn = document.getElementById('btn-analyze');
   const status = document.getElementById('council-status');
   if (btn) {
@@ -1205,14 +1466,16 @@ async function runCouncilAnalyze({ silent = false } = {}) {
       method: 'POST',
       body: JSON.stringify({ with_analysis: true }),
     });
+    if (requestId !== councilRequestId || revision !== positionRevision) return null;
     applyCouncil(data.council || data.analysis?.council);
     return data;
   } catch (err) {
+    if (requestId !== councilRequestId || revision !== positionRevision) return null;
     if (!silent) alert(err.message);
     if (status) status.textContent = '分析失败';
     throw err;
   } finally {
-    if (btn) {
+    if (btn && requestId === councilRequestId) {
       btn.disabled = false;
       btn.textContent = '分析局面';
     }
@@ -1232,7 +1495,7 @@ function wireCouncilUi() {
       const tab = card.dataset.tab || role;
       activateTab(tab);
       const agent = lastCouncil?.agents?.[role];
-      if (agent?.uci && !online.active && !busy) {
+      if (agent?.uci && !busy) {
         // 二次点击同一推荐则走出
         if (card.dataset.armed === agent.uci) {
           playMove(agent.uci);
@@ -1267,7 +1530,7 @@ function wireCouncilUi() {
 }
 
 async function maybeAnalyzeAfterMove() {
-  if (online.active) return;
+  if (!lastMove) return;
   if (!document.getElementById('with-analysis')?.checked) return;
   try {
     await runCouncilAnalyze({ silent: true });
@@ -1275,7 +1538,7 @@ async function maybeAnalyzeAfterMove() {
 }
 
 function queueAnalyzeAfterMove() {
-  if (online.active) return;
+  if (!lastMove) return;
   if (!document.getElementById('with-analysis')?.checked) return;
   runCouncilAnalyze({ silent: true }).catch(() => {});
 }
@@ -1287,43 +1550,6 @@ function clearStudyState() {
 
 function studyLocked() {
   return !!(activePuzzleId || challengeState.active);
-}
-
-function updateOnlineBar() {
-  const bar = document.getElementById('online-bar');
-  if (!bar) return;
-  bar.hidden = !online.active;
-  const status = document.getElementById('online-bar-status');
-  if (status && online.active) {
-    status.textContent = `联机 ${online.roomId} · 你执${online.color === 'red' ? '红' : '黑'}`;
-  }
-}
-
-async function resetOnlineRoom() {
-  if (!online.active || !online.roomId || !online.token) return;
-  if (online.ws && online.ws.readyState === WebSocket.OPEN) {
-    online.ws.send(JSON.stringify({ type: 'reset' }));
-    return;
-  }
-  const data = await api(`/rooms/${online.roomId}/reset`, {
-    method: 'POST',
-    body: JSON.stringify({ token: online.token }),
-  });
-  applyState(data.state || data);
-}
-
-async function leaveOnline() {
-  if (online.ws) {
-    try { online.ws.close(); } catch (_) {}
-  }
-  online = { active: false, roomId: null, token: null, color: null, ws: null };
-  localStorage.removeItem('xq_online');
-  const u = new URL(location.href);
-  u.searchParams.delete('online');
-  u.searchParams.delete('room');
-  history.replaceState(null, '', `${u.pathname}${u.search}${u.hash}`);
-  updateOnlineBar();
-  await newGame();
 }
 
 function aiStrength() {
@@ -1398,12 +1624,15 @@ function refreshModeControls() {
   syncPlayToggle();
 }
 
-async function runAiStep({ nested = false } = {}) {
+async function runAiStep({ nested = false, analyzeAfter = true } = {}) {
+  if (reviewPlayback) return;
   if (busy && !autoPlay && !nested) return;
   if (isGameOver) return;
+  const epoch = gameEpoch;
   busy = true;
   try {
     const next = await api(`/game/ai-step?strength=${encodeURIComponent(aiStrength())}`, { method: 'POST' });
+    if (epoch !== gameEpoch) return null;
     applyState(next);
     const reason = next?.ai_meta?.reason;
     if (reason) {
@@ -1411,14 +1640,15 @@ async function runAiStep({ nested = false } = {}) {
       if (meta) meta.textContent = reason;
     }
     // 不阻塞下一手：Council 后台刷新
-    queueAnalyzeAfterMove();
+    if (analyzeAfter && !autoPlay) queueAnalyzeAfterMove();
     return next;
   } catch (err) {
+    if (epoch !== gameEpoch) return null;
     console.error(err);
     stopAuto();
     throw err;
   } finally {
-    if (!nested) busy = false;
+    if (!nested && epoch === gameEpoch) busy = false;
   }
 }
 
@@ -1428,14 +1658,17 @@ function scheduleAuto() {
     return;
   }
   if (autoTimer) clearTimeout(autoTimer);
+  const epoch = gameEpoch;
   autoTimer = setTimeout(async () => {
-    if (!autoPlay) return;
+    if (!autoPlay || epoch !== gameEpoch) return;
     try {
       await runAiStep({ nested: true });
+      if (epoch !== gameEpoch) return;
       busy = false;
       if (autoPlay && !isGameOver) scheduleAuto();
       else stopAuto();
     } catch (err) {
+      if (epoch !== gameEpoch) return;
       busy = false;
       alert(err.message || String(err));
       stopAuto();
@@ -1444,6 +1677,7 @@ function scheduleAuto() {
 }
 
 function startAuto() {
+  if (reviewPlayback) return;
   if (mode !== 'ai_vs_ai') {
     stopAuto();
     return;
@@ -1454,7 +1688,7 @@ function startAuto() {
 }
 
 async function maybeAiReply(state) {
-  if (online.active || state.is_game_over) return;
+  if (state.is_game_over) return;
   if (mode === 'ai_vs_ai') {
     if (autoPlay) scheduleAuto();
     return;
@@ -1462,64 +1696,74 @@ async function maybeAiReply(state) {
   if (mode !== 'human_vs_ai') return;
   if (state.turn === humanColor) return;
   if (state.controller === 'human') return;
+  const epoch = gameEpoch;
   try {
-    await runAiStep({ nested: true });
+    await waitForMoveAnimation();
+    if (epoch !== gameEpoch) return;
+    await runAiStep({ nested: true, analyzeAfter: false });
   } catch (err) {
-    console.error(err);
+    if (epoch === gameEpoch) console.error(err);
   } finally {
-    busy = false;
+    if (epoch === gameEpoch) busy = false;
   }
 }
 
 async function newGame() {
+  reviewPlayer?.close();
+  reviewHighlights = [];
+  const epoch = ++gameEpoch;
+  cancelMoveAnimation();
+  lastAppliedFen = null;
+  window.ChessCouncilCheckFlash?.reset();
+  positionRevision += 1;
+  busy = true;
   clearStudyState();
+  cursorSquare = null;
+  cursorVisible = false;
   hideFinale();
   stopAuto();
   resetClocks();
+  resetCouncilPanel();
   lastFinaleKey = null;
+  const newBtn = document.getElementById('new-game');
+  if (newBtn) newBtn.disabled = true;
   const section = document.getElementById('review-section');
   if (section) {
     section.hidden = true;
     const box = document.getElementById('review-result');
     if (box) box.innerHTML = '';
   }
-  if (online.active) {
-    await resetOnlineRoom();
-    return;
+  try {
+    mode = document.getElementById('game-mode')?.value || 'human_vs_human';
+    humanColor = document.getElementById('human-color')?.value || 'red';
+    redAi = redAiValue();
+    flipped = mode === 'human_vs_ai' && humanColor === 'black';
+    const state = await api('/game/new', {
+      method: 'POST',
+      body: JSON.stringify({ mode, human_color: humanColor, red_ai: redAi }),
+    });
+    if (epoch !== gameEpoch) return;
+    applyState(state);
+    refreshModeControls();
+    if (mode === 'ai_vs_ai') {
+      startAuto();
+      return;
+    }
+    await maybeAiReply(state);
+    if (lastMove) queueAnalyzeAfterMove();
+  } finally {
+    if (epoch === gameEpoch) {
+      busy = false;
+      if (newBtn) newBtn.disabled = false;
+    }
   }
-  mode = document.getElementById('game-mode')?.value || 'human_vs_human';
-  humanColor = document.getElementById('human-color')?.value || 'red';
-  redAi = redAiValue();
-  flipped = mode === 'human_vs_ai' && humanColor === 'black';
-  const state = await api('/game/new', {
-    method: 'POST',
-    body: JSON.stringify({ mode, human_color: humanColor, red_ai: redAi }),
-  });
-  applyState(state);
-  refreshModeControls();
-  if (mode === 'ai_vs_ai') {
-    startAuto();
-    return;
-  }
-  await maybeAiReply(state);
 }
 
 async function playMove(uci) {
-  if (busy) return;
+  if (busy || reviewPlayback) return;
+  const epoch = gameEpoch;
   busy = true;
   try {
-    if (online.active) {
-      if (online.ws && online.ws.readyState === WebSocket.OPEN) {
-        online.ws.send(JSON.stringify({ type: 'move', uci }));
-      } else {
-        const data = await api(`/rooms/${online.roomId}/move`, {
-          method: 'POST',
-          body: JSON.stringify({ token: online.token, uci }),
-        });
-        applyState(data.state);
-      }
-      return;
-    }
     if (activePuzzleId) {
       const data = await api(`/puzzles/${activePuzzleId}/check`, {
         method: 'POST',
@@ -1549,11 +1793,18 @@ async function playMove(uci) {
       return;
     }
     const state = await api('/game/move', { method: 'POST', body: JSON.stringify({ uci }) });
+    if (epoch !== gameEpoch) return;
     applyState(state);
+    if (state.mistake_saved?.id) {
+      const note = document.getElementById('council-note');
+      if (note) note.textContent = '这步已收进错题本，可在「学习 → 错题本」回到落子前重练。';
+    }
     // 人机：先让 AI 应着，Council 后台更新，避免干等分析
     await maybeAiReply(state);
+    if (epoch !== gameEpoch) return;
     queueAnalyzeAfterMove();
   } catch (err) {
+    if (epoch !== gameEpoch) return;
     const msg = err?.message || String(err);
     if (needsCheckResolveTip() && /非法/.test(msg)) {
       showBoardTip('被将军了', '走这一步会送死，必须先应将。');
@@ -1561,7 +1812,7 @@ async function playMove(uci) {
       alert(msg);
     }
   } finally {
-    busy = false;
+    if (epoch === gameEpoch) busy = false;
   }
 }
 
@@ -1578,14 +1829,14 @@ function rebuildHighlights() {
     const to = uci.slice(2);
     const col = to.charCodeAt(0) - 97;
     const row = 9 - Number(to.slice(1));
-    highlights.push({ row, col, capture: !!board[row]?.[col] });
+    highlights.push({ row, col, capture: !!board[row]?.[col], risk: riskyUci.has(uci) });
   }
 }
 
 async function onBoardClick(event) {
-  if (!canvas || busy) return;
+  if (!canvas || busy || moveAnimation || reviewPlayback) return;
   const stateTurn = turn;
-  const may = online.active ? online.color === stateTurn : (mode === 'human_vs_ai' ? stateTurn === humanColor : mode !== 'ai_vs_ai');
+  const may = mode === 'human_vs_ai' ? stateTurn === humanColor : mode !== 'ai_vs_ai';
   if (!may) return;
 
   const rect = canvas.getBoundingClientRect();
@@ -1644,13 +1895,14 @@ async function bootPlay() {
   wireBoardKeyboard();
   document.getElementById('new-game')?.addEventListener('click', () => newGame().catch(e => alert(e.message)));
   document.getElementById('flip')?.addEventListener('click', () => {
+    cancelMoveAnimation();
     flipped = !flipped;
+    updateBottomPlayerHints();
     selected = null;
     highlights = [];
     renderBoard();
   });
   document.getElementById('undo')?.addEventListener('click', async () => {
-    if (online.active) return alert('联机中请双方协商后重置');
     if (studyLocked()) return alert('残局/闯关不能悔棋，请点「新对局」退出');
     try {
       applyState(await api('/game/undo', { method: 'POST' }));
@@ -1660,7 +1912,6 @@ async function bootPlay() {
     }
   });
   document.getElementById('ai-step')?.addEventListener('click', async () => {
-    if (online.active) return alert('联机中请双方自行走子');
     if (studyLocked()) return alert('残局/闯关请自己走出正解，不能让 AI 代走');
     if (autoPlay) return;
     try {
@@ -1677,12 +1928,6 @@ async function bootPlay() {
   });
   document.getElementById('playback-speed')?.addEventListener('change', () => {
     if (autoPlay) scheduleAuto();
-  });
-  document.getElementById('btn-room-reset')?.addEventListener('click', () => {
-    resetOnlineRoom().catch((err) => alert(err.message));
-  });
-  document.getElementById('btn-room-leave')?.addEventListener('click', () => {
-    leaveOnline().catch((err) => alert(err.message));
   });
   document.getElementById('hint')?.addEventListener('click', async () => {
     try {
@@ -1712,13 +1957,15 @@ async function bootPlay() {
     redAi = redAiValue();
   });
   refreshModeControls();
-  const resumed = await resumeOnlineIfNeeded();
-  updateOnlineBar();
-  if (resumed) {
-    runCouncilAnalyze({ silent: true }).catch(() => {});
-    return;
-  }
   const params = new URLSearchParams(location.search);
+  let mistakeHandoff = null;
+  if (params.get('mistake') === '1') {
+    try {
+      const raw = sessionStorage.getItem('xq_mistake_handoff_v1');
+      mistakeHandoff = raw ? JSON.parse(raw) : null;
+      sessionStorage.removeItem('xq_mistake_handoff_v1');
+    } catch (_) {}
+  }
   if (params.get('challenge') === '1') {
     try {
       const raw = sessionStorage.getItem('xq_challenge_state_v1');
@@ -1732,10 +1979,28 @@ async function bootPlay() {
       if (sel) sel.value = humanColor;
     }
   }
-  if (params.get('puzzle') || params.get('continue') === '1' || params.get('library') === '1' || params.get('challenge') === '1') {
+  if (params.get('puzzle') || params.get('continue') === '1' || params.get('library') === '1' || params.get('challenge') === '1' || params.get('mistake') === '1') {
     applyState(await api('/game/state'));
     const note = document.getElementById('council-note');
-    if (params.get('puzzle')) {
+    if (params.get('mistake') === '1' && mistakeHandoff) {
+      mode = 'human_vs_human';
+      humanColor = mistakeHandoff.side || 'red';
+      flipped = humanColor === 'black';
+      const modeSelect = document.getElementById('game-mode');
+      if (modeSelect) modeSelect.value = 'human_vs_human';
+      refreshModeControls();
+      mistakeProjection = {
+        playedUci: mistakeHandoff.played_uci,
+        recommendedUci: mistakeHandoff.recommended_uci,
+      };
+      const route = uciProjectionPoints(mistakeHandoff.played_uci);
+      if (route) {
+        selected = { ...route.from };
+        rebuildHighlights();
+      }
+      renderBoard();
+      if (note) note.textContent = '错题复练：红色虚线是实战差招，绿色虚线是推荐路线。请重新走一步。';
+    } else if (params.get('puzzle')) {
       activePuzzleId = params.get('puzzle');
       if (note) note.textContent = '残局已加载：走出正确着法即可通关；错误着法不会落子。';
     } else if (params.get('challenge') === '1') {
@@ -1759,8 +2024,82 @@ async function bootPlay() {
     activePuzzleId = null;
     await newGame();
   }
-  // 开局自动给一版局面阅读
-  runCouncilAnalyze({ silent: true }).catch(() => {});
+  // 新局保持待命；首步落子后或玩家手动点击时才启动理事会。
+}
+
+let xqMistakeCache = [];
+let xqMistakeFilter = '';
+
+function xqMistakeLabel(cls) {
+  return ({ inaccuracy: '缓着', mistake: '漏着', blunder: '大漏' })[cls] || '差招';
+}
+
+function xqMistakeDate(value) {
+  const date = new Date(value || '');
+  return Number.isNaN(date.getTime()) ? '最近对局' : date.toLocaleDateString('zh-CN');
+}
+
+function renderXqMistakeBook() {
+  const box = document.getElementById('mistake-list');
+  if (!box) return;
+  const items = xqMistakeFilter
+    ? xqMistakeCache.filter((item) => item.classification === xqMistakeFilter)
+    : xqMistakeCache;
+  const summary = document.getElementById('mistake-summary');
+  const status = document.getElementById('mistake-status');
+  if (summary) summary.textContent = `${xqMistakeCache.length} 道待练`;
+  if (status) status.textContent = items.length ? `当前显示 ${items.length} 道` : '';
+  if (!items.length) {
+    box.innerHTML = `<div class="mistake-empty">${xqMistakeCache.length ? '这个等级暂时没有错题。' : '还没有错题。对局中的缓着、漏着和大漏会自动来到这里。'}</div>`;
+    return;
+  }
+  box.innerHTML = items.map((item) => {
+    const repeated = Number(item.repeat_count || 1);
+    const recommendation = item.recommended_san || item.recommended_uci || '重新比较候选着';
+    const side = item.side === 'black' ? '黑方' : '红方';
+    return `
+      <article class="mistake-row">
+        <div class="mistake-row-main">
+          <div class="mistake-row-title">
+            <span class="mistake-severity ${escapeHtml(item.classification)}">${xqMistakeLabel(item.classification)}</span>
+            <strong>实战 ${escapeHtml(item.played_san || item.played_uci || '—')} → 建议 ${escapeHtml(recommendation)}</strong>
+          </div>
+          <p class="mistake-row-copy">${escapeHtml(item.coach || '回到落子前，重新检查失子风险和落点安全。')}</p>
+          <div class="mistake-row-meta">${side} · ${xqMistakeDate(item.updated_at)}${repeated > 1 ? ` · 重复 ${repeated} 次` : ''}</div>
+        </div>
+        <button type="button" class="accent mistake-project" data-mistake-id="${escapeHtml(item.id)}">投影到棋盘</button>
+      </article>`;
+  }).join('');
+  box.querySelectorAll('.mistake-project').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const id = button.dataset.mistakeId;
+      const item = xqMistakeCache.find((entry) => entry.id === id);
+      button.disabled = true;
+      button.textContent = '正在还原…';
+      try {
+        const data = await api(`/mistakes/${encodeURIComponent(id)}/load`, { method: 'POST' });
+        sessionStorage.setItem('xq_mistake_handoff_v1', JSON.stringify(data.mistake || item));
+        location.href = 'index.html?mistake=1&continue=1';
+      } catch (error) {
+        alert(error.message || '错题加载失败');
+        button.disabled = false;
+        button.textContent = '投影到棋盘';
+      }
+    });
+  });
+}
+
+async function loadXqMistakeBook() {
+  const box = document.getElementById('mistake-list');
+  if (!box) return;
+  box.innerHTML = '<div class="mistake-empty">正在整理错题…</div>';
+  try {
+    const data = await api('/mistakes');
+    xqMistakeCache = data.items || [];
+    renderXqMistakeBook();
+  } catch (error) {
+    box.innerHTML = `<div class="mistake-empty">${escapeHtml(error.message || '错题本加载失败，请稍后重试。')}</div>`;
+  }
 }
 
 async function bootLearn() {
@@ -1877,7 +2216,9 @@ async function bootLearn() {
       const mode = tab.dataset.learn;
       document.getElementById('learn-library').hidden = mode !== 'library';
       document.getElementById('learn-challenge').hidden = mode !== 'challenge';
+      document.getElementById('learn-mistakes').hidden = mode !== 'mistakes';
       if (mode === 'challenge') loadChallenges().catch((e) => alert(e.message));
+      if (mode === 'mistakes') loadXqMistakeBook();
     });
   });
   document.querySelector('.learn-mode-tabs')?.addEventListener('keydown', (ev) => {
@@ -1902,111 +2243,16 @@ async function bootLearn() {
     });
   });
 
+  document.querySelectorAll('.mistake-filter').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.mistake-filter').forEach((item) => item.classList.remove('active'));
+      btn.classList.add('active');
+      xqMistakeFilter = btn.dataset.mistakeClass || '';
+      renderXqMistakeBook();
+    });
+  });
+
   await loadLibrary('');
-}
-
-async function bootOnline() {
-  const status = document.getElementById('online-status');
-  const roomInput = document.getElementById('room-code');
-  document.getElementById('btn-create')?.addEventListener('click', async () => {
-    const name = document.getElementById('player-name')?.value || '玩家';
-    const color = document.getElementById('seat-color')?.value || 'red';
-    const data = await api('/rooms', { method: 'POST', body: JSON.stringify({ name, color }) });
-    online = { active: true, roomId: data.room_id, token: data.token, color: data.color, ws: null };
-    // 联机页不挂 WS：进对弈页再连，避免跳转时 peer-left 把对手踢成「离线」
-    localStorage.setItem('xq_online', JSON.stringify({ ...online, ws: undefined }));
-    status.textContent = `已创建房间 ${data.room_id}，你执${data.color === 'red' ? '红' : '黑'} · 点「进入对弈」开局`;
-    roomInput.value = data.room_id;
-  });
-  document.getElementById('btn-join')?.addEventListener('click', async () => {
-    const name = document.getElementById('player-name')?.value || '玩家';
-    const code = (roomInput?.value || '').trim().toUpperCase();
-    const data = await api(`/rooms/${code}/join`, { method: 'POST', body: JSON.stringify({ name }) });
-    online = { active: true, roomId: data.room_id, token: data.token, color: data.color, ws: null };
-    localStorage.setItem('xq_online', JSON.stringify({ ...online, ws: undefined }));
-    status.textContent = `已加入 ${data.room_id}，你执${data.color === 'red' ? '红' : '黑'} · 点「进入对弈」开局`;
-  });
-  document.getElementById('btn-goto-play')?.addEventListener('click', () => {
-    if (online.ws) {
-      try { online.ws.onclose = null; online.ws.close(); } catch (_) {}
-      online.ws = null;
-    }
-    location.href = 'index.html?online=1';
-  });
-  document.getElementById('btn-copy')?.addEventListener('click', async () => {
-    if (!online.roomId) return;
-    const url = `${location.origin}/xiangqi/index.html?room=${online.roomId}`;
-    await navigator.clipboard.writeText(url);
-    status.textContent = '房间链接已复制';
-  });
-}
-
-function connectWs() {
-  if (!online.roomId || !online.token) return;
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}${API}/rooms/${online.roomId}/ws?token=${encodeURIComponent(online.token)}`);
-  online.ws = ws;
-  ws.onmessage = (ev) => {
-    const msg = JSON.parse(ev.data);
-    if (msg.state) applyState(msg.state);
-    if (msg.type === 'error') alert(msg.message || '联机错误');
-  };
-}
-
-async function resumeOnlineIfNeeded() {
-  const params = new URLSearchParams(location.search);
-  const roomParam = (params.get('room') || '').trim().toUpperCase();
-  if (params.get('online') !== '1' && !roomParam) return false;
-  try {
-    const saved = JSON.parse(localStorage.getItem('xq_online') || 'null');
-    const sameRoom = saved?.roomId && (!roomParam || String(saved.roomId).toUpperCase() === roomParam);
-    if (saved?.token && sameRoom) {
-      online = { ...saved, ws: null, active: true };
-      const state = await api(`/rooms/${online.roomId}`);
-      mode = 'human_vs_human';
-      flipped = online.color === 'black';
-      applyState(state);
-      connectWs();
-      const note = document.getElementById('council-note');
-      if (note) {
-        note.innerHTML = '';
-        const strong = document.createElement('strong');
-        strong.textContent = `联机房间 ${online.roomId}`;
-        const p = document.createElement('p');
-        p.textContent = `你执${online.color === 'red' ? '红' : '黑'}方。对手走子会实时同步。`;
-        note.append(strong, p);
-      }
-      return true;
-    }
-    if (roomParam) {
-      const name = document.getElementById('player-name')?.value || '访客';
-      const data = await api(`/rooms/${roomParam}/join`, {
-        method: 'POST',
-        body: JSON.stringify({ name }),
-      });
-      online = {
-        active: true,
-        roomId: data.room_id,
-        token: data.token,
-        color: data.color,
-        ws: null,
-      };
-      localStorage.setItem('xq_online', JSON.stringify({ ...online, ws: undefined }));
-      mode = 'human_vs_human';
-      flipped = online.color === 'black';
-      applyState(data.state || (await api(`/rooms/${online.roomId}`)));
-      connectWs();
-      const note = document.getElementById('council-note');
-      if (note) {
-        note.textContent = `已通过邀请加入 ${online.roomId}，你执${online.color === 'red' ? '红' : '黑'}方`;
-      }
-      return true;
-    }
-  } catch (err) {
-    console.error(err);
-    alert(err.message || '加入联机房间失败');
-  }
-  return false;
 }
 
 async function bootTools() {
@@ -2038,8 +2284,6 @@ async function boot() {
     await bootPlay();
   } else if (PAGE === 'learn') {
     await bootLearn();
-  } else if (PAGE === 'online') {
-    await bootOnline();
   } else if (PAGE === 'tools') {
     await bootTools();
   }

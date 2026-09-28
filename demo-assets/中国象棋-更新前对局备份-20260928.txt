@@ -1,0 +1,15 @@
+ChessCouncil 中国象棋对局备份
+保存原因：更新关键招数回看功能前，保留窗口内已结束的 28 着对局。
+结果：黑方胜 · 绝杀
+
+从标准初始局面开始的 UCI 着法（按顺序）：
+g3g4 h7g7 c0e2 h9i7 h2g2 b7e7 b0d1 b9c7 b2c2 a9b9 h0i2 b9b1 i0i1 e7e3 f0e1 b1d1 a0b0 e6e5 i1f1 c7e6 f1f3 e5e4 c2c6 i9i8 b0b7 i8d8 b7f7 d1d0
+
+终局 FEN（中国象棋格式）：
+2bakab2/3r5/5Rc1n/p1C1n1p1p/9/4p1P2/P1P1cR2P/4B1C1N/4A4/3rK1B2 w - - 0 15
+
+关键招数：
+第 14 着 黑 炮e7xe3（将军）
+第 16 着 黑 车b1xd1
+第 23 着 红 炮c2xc6
+第 28 着 黑 车d1xd0（将军、绝杀）

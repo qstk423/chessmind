@@ -29,13 +29,14 @@ from src.config import (
     QWEN_MODEL,
 )
 from src.council.debate import ArbiterAgent, consensus_verdict, run_debate
+from src.council.local_analysis import build_local_council
 from src.council.demos import get_demo, list_demos
 from src.council.disagreement import compute_disagreement
 from src.council.review import build_review
 from src.library.catalog import get_library_item, list_library
 from src.llm_client import chat_completion, make_llm_client, make_qwen_client, message_text
 from src.llm_logger import new_game_id, set_context
-from src.storage import upsert_game
+from src.storage import upsert_game, upsert_mistake
 
 GameMode = Literal["human_vs_human", "human_vs_ai", "ai_vs_ai"]
 AnalysisMode = Literal["fast", "deep"]
@@ -152,12 +153,14 @@ class ChessMindOrchestrator:
         self.library_meta = None
         return self.get_state()
 
-    def load_fen(self, fen: str) -> dict:
-        """加载自定义局面（保留当前模式设置）。"""
+    def load_fen(self, fen: str, *, free_play: bool = False) -> dict:
+        """加载自定义局面；工具导入可选择双方自由推演。"""
         try:
             self.game.load_fen(fen)
         except ValueError as e:
             return {"error": f"非法 FEN：{e}"}
+        if free_play:
+            self.mode = "human_vs_human"
         self.game_id = new_game_id()
         self.move_analyses = []
         self.last_position_analysis = None
@@ -380,6 +383,63 @@ class ChessMindOrchestrator:
                 pass
         return result
 
+    async def analyze_ply(self, ply: int, *, analysis_mode: AnalysisMode | None = None) -> dict:
+        """在棋局继续行进时，分析指定半回合的固定局面。"""
+        game = self.game
+        if ply < 1 or ply > len(game.move_history):
+            return {"error": "着法不存在"}
+        record = game.move_history[ply - 1]
+        entry = next(
+            (
+                item for item in self.move_analyses
+                if not item.get("position_only")
+                and item.get("move", {}).get("number") == ply
+                and item.get("fen") == record.fen_after
+            ),
+            None,
+        )
+        if entry is None:
+            return {"error": "本步尚无评价记录"}
+
+        source_game_id = self.game_id
+        fen = record.fen_after
+        history = [move.san for move in game.move_history[max(0, ply - 10):ply]]
+        move_class = entry.get("evaluation", {}).get("classification") or "position"
+        set_context(game_id=source_game_id, move_number=ply)
+        eval_after = await self.evaluator.evaluate(fen)
+        grounding = describe_position(chess.Board(fen), eval_after)
+        analysis = await self._run_council(
+            fen=fen,
+            history=history,
+            grounding=grounding,
+            eval_after=eval_after,
+            move_class=move_class,
+            analysis_mode=analysis_mode,
+        )
+        if (
+            self.game is not game
+            or self.game_id != source_game_id
+            or len(game.move_history) < ply
+            or game.move_history[ply - 1] is not record
+        ):
+            return {"error": "棋局已变化，请重新分析", "stale": True}
+
+        entry["analysis"] = {
+            "summary": analysis.get("summary"),
+            "council": analysis.get("council"),
+        }
+        return {
+            "move": entry["move"],
+            "fen": fen,
+            "evaluation": {
+                **entry.get("evaluation", {}),
+                "after": eval_after,
+            },
+            "analysis": analysis,
+            "game_over": game.is_game_over and ply == game.move_count,
+            "result": game.result if ply == game.move_count else None,
+        }
+
     def get_review(self) -> dict:
         return build_review(
             self.move_analyses,
@@ -420,7 +480,7 @@ class ChessMindOrchestrator:
         if analysis_mode in ("fast", "deep"):
             self.analysis_mode = analysis_mode
         analyze = self.with_analysis if with_analysis is None else with_analysis
-        return await self.analyze_move(self.game, uci, with_analysis=analyze)
+        return await self.analyze_move(self.game, uci, with_analysis=analyze, user_move=True)
 
     def undo(self, *, to_human: bool = True) -> dict:
         """悔棋。人 vs AI 时尽量撤回到人类回合（常为两步）。"""
@@ -480,6 +540,15 @@ class ChessMindOrchestrator:
         diverge_roles: bool = False,
         analysis_mode: AnalysisMode | None = None,
     ) -> dict:
+        mode = analysis_mode or self.analysis_mode
+        # 默认快评和中国象棋一样走本地确定性分析，不受模型队列或网络影响。
+        if mode == "fast" and not diverge_roles:
+            return build_local_council(
+                fen=fen,
+                engine_eval=eval_after,
+                move_class=move_class,
+                coach_level=self.coach_level,
+            )
         async with self._council_sem:
             return await self._run_council_locked(
                 fen=fen,
@@ -630,6 +699,7 @@ class ChessMindOrchestrator:
         *,
         with_analysis: bool = True,
         ai_meta: dict | None = None,
+        user_move: bool = False,
     ) -> dict | None:
         legal = game.legal_moves()
         if uci not in legal:
@@ -643,7 +713,15 @@ class ChessMindOrchestrator:
         if self.mode == "human_vs_human" and not with_analysis:
             eval_depth = min(8, self.engine_depth)
 
-        eval_before = await self.evaluator.evaluate(game.fen, depth=eval_depth)
+        fen_before = game.fen
+        eval_before = await self.evaluator.evaluate(fen_before, depth=eval_depth)
+        recommended_san = (eval_before.get("pv") or [None])[0]
+        recommended_uci = None
+        if recommended_san:
+            try:
+                recommended_uci = game.board.parse_san(str(recommended_san)).uci()
+            except (ValueError, AssertionError):
+                recommended_uci = None
 
         record = game.push_move(uci)
         if record is None:
@@ -700,6 +778,25 @@ class ChessMindOrchestrator:
         }
         if ai_meta:
             result["ai"] = ai_meta
+        if user_move and move_class in {"inaccuracy", "mistake", "blunder"}:
+            coach = ((analysis.get("council") or {}).get("agents") or {}).get("coach") or {}
+            try:
+                result["mistake_saved"] = upsert_mistake(
+                    variant="chess",
+                    classification=move_class,
+                    fen_before=fen_before,
+                    fen_after=result["fen"],
+                    played_uci=record.uci,
+                    played_san=record.san,
+                    recommended_uci=recommended_uci,
+                    recommended_san=str(recommended_san) if recommended_san else None,
+                    coach=coach.get("summary") or "回到落子前局面，先比较引擎首选与实战着法。",
+                    side="white" if mover_is_white else "black",
+                    ply=record.move_number,
+                    score_loss=abs(float(record.eval_delta or 0)) / 100.0,
+                )
+            except Exception as exc:
+                result["mistake_saved"] = {"error": f"{type(exc).__name__}: {exc}"}
         if game.is_game_over:
             finale = detect_finale(game.board)
             if finale:

@@ -8,7 +8,10 @@
 """
 from __future__ import annotations
 
+import asyncio
 import random
+import time
+from dataclasses import dataclass
 from typing import Literal
 
 from src.xiangqi.rules import (
@@ -41,13 +44,30 @@ _CENTER = [2, 4, 8, 10, 12, 10, 8, 4, 2]
 
 Strength = Literal["easy", "normal", "hard"]
 
-# 内建只作 Pikafish 失败兜底，必须够快；强度主要靠引擎思考时间
+# 内建只作 Pikafish 失败兜底；三个档位用候选范围和允许分差拉开强度。
 STRENGTH_DEPTH = {"easy": 1, "normal": 2, "hard": 3}
 STRENGTH_NODES = {"easy": 12, "normal": 20, "hard": 28}
 STRENGTH_NODE_BUDGET = {"easy": 2_500, "normal": 8_000, "hard": 20_000}
-# Pikafish：思考时间（毫秒）——真正拉开强度
-PIKAFISH_DEPTH = {"easy": 12, "normal": 18, "hard": 22}
-PIKAFISH_MOVETIME_MS = {"easy": 350, "normal": 800, "hard": 1400}
+STRENGTH_TIME_BUDGET = {"easy": 0.4, "normal": 0.9, "hard": 1.8}
+PIKAFISH_DEPTH = {"easy": 10, "normal": 16, "hard": 22}
+PIKAFISH_MOVETIME_MS = {"easy": 250, "normal": 750, "hard": 1500}
+PIKAFISH_MULTIPV = {"easy": 4, "normal": 2, "hard": 1}
+PIKAFISH_MAX_LOSS_CP = {"easy": 220, "normal": 85, "hard": 0}
+
+
+@dataclass
+class SearchBudget:
+    remaining: int
+    deadline: float
+
+    def exhausted(self) -> bool:
+        return self.remaining <= 0 or time.monotonic() >= self.deadline
+
+    def visit(self) -> bool:
+        if self.exhausted():
+            return False
+        self.remaining -= 1
+        return True
 
 # 开局库：局面键（布局+行棋方）→ 候选 UCI。刻意避开早期无保护「炮打马」。
 _OPENING_BOOK: dict[str, list[str]] = {
@@ -179,7 +199,9 @@ def _order(game: XiangqiGame, moves: list[Move], *, deep: bool = False) -> list[
     return [m for _, m in scored]
 
 
-def _quiescence(game: XiangqiGame, alpha: int, beta: int, maximizing: bool, qdepth: int) -> int:
+def _quiescence(game: XiangqiGame, alpha: int, beta: int, maximizing: bool, qdepth: int, budget: SearchBudget) -> int:
+    if not budget.visit():
+        return evaluate_position(game)
     stand = evaluate_position(game)
     if qdepth <= 0 or game.result:
         return stand
@@ -211,7 +233,7 @@ def _quiescence(game: XiangqiGame, alpha: int, beta: int, maximizing: bool, qdep
         best = stand
         for mv in noisy:
             game.play_uci(mv.uci)
-            best = max(best, _quiescence(game, alpha, beta, False, qdepth - 1))
+            best = max(best, _quiescence(game, alpha, beta, False, qdepth - 1, budget))
             game.undo()
             alpha = max(alpha, best)
             if beta <= alpha:
@@ -220,7 +242,7 @@ def _quiescence(game: XiangqiGame, alpha: int, beta: int, maximizing: bool, qdep
     best = stand
     for mv in noisy:
         game.play_uci(mv.uci)
-        best = min(best, _quiescence(game, alpha, beta, True, qdepth - 1))
+        best = min(best, _quiescence(game, alpha, beta, True, qdepth - 1, budget))
         game.undo()
         beta = min(beta, best)
         if beta <= alpha:
@@ -234,15 +256,14 @@ def _search(
     alpha: int,
     beta: int,
     maximizing: bool,
-    node_cap: list[int],
+    budget: SearchBudget,
 ) -> int:
-    if node_cap[0] <= 0:
+    if not budget.visit():
         return evaluate_position(game)
-    node_cap[0] -= 1
     if game.result:
         return evaluate_position(game)
     if depth == 0:
-        return _quiescence(game, alpha, beta, maximizing, qdepth=4)
+        return _quiescence(game, alpha, beta, maximizing, qdepth=4, budget=budget)
 
     moves = _order(game, legal_moves(game.board, game.turn))
     if not moves:
@@ -252,7 +273,7 @@ def _search(
         best = -10**9
         for mv in moves:
             game.play_uci(mv.uci)
-            best = max(best, _search(game, depth - 1, alpha, beta, False, node_cap))
+            best = max(best, _search(game, depth - 1, alpha, beta, False, budget))
             game.undo()
             alpha = max(alpha, best)
             if beta <= alpha:
@@ -262,7 +283,7 @@ def _search(
     best = 10**9
     for mv in moves:
         game.play_uci(mv.uci)
-        best = min(best, _search(game, depth - 1, alpha, beta, True, node_cap))
+        best = min(best, _search(game, depth - 1, alpha, beta, True, budget))
         game.undo()
         beta = min(beta, best)
         if beta <= alpha:
@@ -282,6 +303,56 @@ def _book_move(game: XiangqiGame) -> str | None:
     return random.choice(ok)
 
 
+def acceptable_engine_moves(
+    candidates: list[tuple[str, int | None]], strength: Strength
+) -> list[str]:
+    """只从引擎认为不至于明显送子的候选里选，难度决定容差。"""
+    if not candidates:
+        return []
+    best_score = candidates[0][1]
+    selected = [candidates[0][0]]
+    for uci, score in candidates[1:PIKAFISH_MULTIPV[strength]]:
+        if best_score is not None and score is not None:
+            if best_score - score <= PIKAFISH_MAX_LOSS_CP[strength]:
+                selected.append(uci)
+    return selected
+
+
+def _pick_engine_candidate(candidates: list[tuple[str, int | None]], strength: Strength) -> str | None:
+    pool = acceptable_engine_moves(candidates, strength)
+    if not pool:
+        return None
+    if strength == "hard" or len(pool) == 1:
+        return pool[0]
+    weights = [4, 1] if strength == "normal" else [4, 3, 2, 1]
+    return random.choices(pool, weights=weights[:len(pool)], k=1)[0]
+
+
+def _gifts_undefended_piece(game: XiangqiGame, uci: str) -> bool:
+    """无引擎时的最低安全线：避免把马、炮、车直接放到白吃点。"""
+    mv = Move.from_uci(uci)
+    piece = game.board[mv.fr][mv.fc]
+    if PIECE_VALUE.get((piece or "").lower(), 0) < 200:
+        return False
+    game.play_uci(uci)
+    try:
+        for reply in legal_moves(game.board, game.turn):
+            if (reply.tr, reply.tc) != (mv.tr, mv.tc):
+                continue
+            game.play_uci(reply.uci)
+            try:
+                if not any(
+                    recapture.tr == mv.tr and recapture.tc == mv.tc
+                    for recapture in legal_moves(game.board, game.turn)
+                ):
+                    return True
+            finally:
+                game.undo()
+    finally:
+        game.undo()
+    return False
+
+
 def choose_move_builtin(game: XiangqiGame, *, strength: Strength = "normal") -> str | None:
     book = _book_move(game)
     if book:
@@ -298,14 +369,28 @@ def choose_move_builtin(game: XiangqiGame, *, strength: Strength = "normal") -> 
     if not moves:
         return None
 
+    # Pikafish 临时不可用时，内建搜索承担最后一道安全线。浅层搜索容易
+    # 被“先吃一子”的表面收益诱导，看不到下一手被吃回（例如车换马）。
+    # 普通/强档先移除这种没有后续补偿的送大子着；若局面中所有着法都
+    # 无法避免损失，则保留原候选，避免把合法着法过滤为空。
+    if strength in ("normal", "hard"):
+        safe_moves = [mv for mv in moves if not _gifts_undefended_piece(game, mv.uci)]
+        if safe_moves:
+            moves = safe_moves
+
     maximizing = game.turn == "red"
     best_score = -10**9 if maximizing else 10**9
     best: list[str] = []
-    node_budget = [STRENGTH_NODE_BUDGET.get(strength, 90_000)]
+    budget = SearchBudget(
+        STRENGTH_NODE_BUDGET.get(strength, 8_000),
+        time.monotonic() + STRENGTH_TIME_BUDGET.get(strength, 0.9),
+    )
 
     for mv in moves:
+        if best and budget.exhausted():
+            break
         game.play_uci(mv.uci)
-        score = _search(game, max(0, depth - 1), -10**9, 10**9, not maximizing, node_budget)
+        score = _search(game, max(0, depth - 1), -10**9, 10**9, not maximizing, budget)
         game.undo()
         # 根着再扣一次，防止同分随机抽到退回着
         if _is_null_retract(game, mv):
@@ -348,16 +433,20 @@ def choose_move(
             level = "normal"
 
     try:
-        from src.xiangqi.engine import best_move_pikafish, pikafish_available
+        from src.xiangqi.engine import candidate_moves_pikafish, pikafish_available
 
         if pikafish_available():
-            eng_depth = PIKAFISH_DEPTH[level]
-            movetime = PIKAFISH_MOVETIME_MS[level]
-            mv = best_move_pikafish(game.fen(), depth=eng_depth, movetime_ms=movetime)
+            candidates = candidate_moves_pikafish(
+                game.fen(),
+                depth=PIKAFISH_DEPTH[level],
+                movetime_ms=PIKAFISH_MOVETIME_MS[level],
+                multipv=PIKAFISH_MULTIPV[level],
+            )
+            mv = _pick_engine_candidate(candidates, level)
             if mv and is_legal(game.board, Move.from_uci(mv), game.turn):
-                # 引擎若给出无意义退回，再搜一档内建兜底
-                if not _is_null_retract(game, Move.from_uci(mv)):
-                    return mv
+                # 强引擎会把战术、交换和王安全一并计入。最佳着有时必须
+                # 原路回防；不能为了“看起来不重复”而用浅搜索覆盖它。
+                return mv
     except Exception:
         pass
 
@@ -414,13 +503,13 @@ async def choose_move_for_side(
         try:
             from src.xiangqi.llm_picker import pick_xiangqi_move
 
-            pick = await pick_xiangqi_move(game, which=ai_side)  # type: ignore[arg-type]
+            pick = await pick_xiangqi_move(game, which=ai_side, strength=strength)  # type: ignore[arg-type]
             uci = pick.get("uci")
             legal = {mv.uci for mv in legal_moves(game.board, game.turn)}
             if uci and uci in legal:
                 # 模型爱「走一步再走回去」：无意义退回直接改用引擎
                 if _is_null_retract(game, Move.from_uci(uci)):
-                    eng = choose_move(game, depth=depth, strength=strength)
+                    eng = await asyncio.to_thread(choose_move, game, depth=depth, strength=strength)
                     if eng:
                         return {
                             "uci": eng,
@@ -428,6 +517,23 @@ async def choose_move_for_side(
                             "reason": f"{ai_side} 选了原路退回，改用引擎",
                             "controller": ai_side,
                         }
+                candidates = pick.get("engine_candidates") or []
+                acceptable = acceptable_engine_moves(candidates, strength)
+                if acceptable and uci not in acceptable:
+                    return {
+                        "uci": _pick_engine_candidate(candidates, strength),
+                        "source": "engine_safety",
+                        "reason": f"{ai_side} 候选低于{strength}档安全线，改用引擎",
+                        "controller": ai_side,
+                    }
+                if not acceptable and _gifts_undefended_piece(game, uci):
+                    eng = await asyncio.to_thread(choose_move_builtin, game, strength=strength)
+                    return {
+                        "uci": eng,
+                        "source": "engine_safety",
+                        "reason": f"{ai_side} 候选会白送大子，改用内建引擎",
+                        "controller": ai_side,
+                    }
                 return {
                     "uci": uci,
                     "source": ai_side,
@@ -437,7 +543,7 @@ async def choose_move_for_side(
             fallback_reason = pick.get("reason") or "无效着法"
         except Exception as exc:  # noqa: BLE001
             fallback_reason = f"{type(exc).__name__}: {exc}"
-        eng = choose_move(game, depth=depth, strength=strength)
+        eng = await asyncio.to_thread(choose_move, game, depth=depth, strength=strength)
         return {
             "uci": eng,
             "source": "engine_fallback",
@@ -445,7 +551,7 @@ async def choose_move_for_side(
             "controller": ai_side,
         }
 
-    eng = choose_move(game, depth=depth, strength=strength)
+    eng = await asyncio.to_thread(choose_move, game, depth=depth, strength=strength)
     return {
         "uci": eng,
         "source": "engine",

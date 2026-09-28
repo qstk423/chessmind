@@ -1,11 +1,14 @@
 """对弈 / AI / 残局 / FEN API。"""
 from __future__ import annotations
 
+from copy import deepcopy
+
 from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from src.xiangqi.ai import choose_move_for_side, opponent_ai, resolve_ai_side
-from src.xiangqi.council import analyze_position
+from src.storage import get_mistake, list_mistakes, upsert_mistake
+from src.xiangqi.council import analyze_position, evaluate_played_move
 from src.xiangqi.library import get_library_item, list_challenges, list_library
 from src.xiangqi.puzzles import get_puzzle, list_puzzles, solution_lines_of
 from src.xiangqi.rules import START_FEN, Move, legal_targets, parse_fen
@@ -113,7 +116,6 @@ def _parse_square(sq: str) -> tuple[int, int]:
 @router.get("/health")
 def health():
     from src.config import LLM_ENABLED, LLM_MODEL, QWEN_ENABLED, QWEN_MODEL
-    from src.xiangqi.rooms import room_manager
 
     engine_info = {"available": False}
     try:
@@ -138,7 +140,6 @@ def health():
         "rules": "mvp_mate_stalemate_threefold_perpetual_check",
         "sessions": "header",
         "session_pool": sessions.stats(),
-        "room_pool": room_manager.stats(),
     }
 
 
@@ -158,7 +159,6 @@ def capabilities():
             "library",
             "challenges",
             "fen_tools",
-            "online_rooms",
             "council_analyze",
             "post_review",
             "session_isolation",
@@ -225,11 +225,29 @@ def make_move(
         red_ai=_normalize_red_ai(settings.get("red_ai")),
     ) is not None:
         raise HTTPException(400, "当前不是人类行棋回合")
+    quality = evaluate_played_move(game, req.uci)
     try:
         entry = game.play_uci(req.uci)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return _state(game, sid, last_move=entry)
+    entry["classification"] = quality.get("classification") or "good"
+    mistake_saved = None
+    if entry["classification"] in {"inaccuracy", "mistake", "blunder"}:
+        mistake_saved = upsert_mistake(
+            variant="xiangqi",
+            classification=entry["classification"],
+            fen_before=entry["fen_before"],
+            fen_after=entry["fen"],
+            played_uci=entry["uci"],
+            played_san=entry["san"],
+            recommended_uci=quality.get("recommended_uci"),
+            recommended_san=quality.get("recommended_san"),
+            coach="回到落子前，比较实战着与理事会推荐，重点检查失子和落点安全。",
+            side=entry.get("color"),
+            ply=len(game.history),
+            score_loss=float(quality.get("score_loss") or 0),
+        )
+    return _state(game, sid, last_move=entry, mistake_saved=mistake_saved)
 
 
 @router.post("/game/undo")
@@ -304,7 +322,11 @@ async def ai_step(
     kwargs: dict = {"strength": level, "ai_side": side}
     if depth is not None:
         kwargs["depth"] = max(1, min(5, int(depth)))
-    choice = await choose_move_for_side(game, **kwargs)
+    revision = game.revision
+    search_game = deepcopy(game)
+    choice = await choose_move_for_side(search_game, **kwargs)
+    if game.revision != revision:
+        raise HTTPException(409, "对局已变化，本次 AI 结果已丢弃")
     uci = choice.get("uci")
     if not uci:
         raise HTTPException(400, "无合法着法")
@@ -392,6 +414,34 @@ def game_review(
     sid, game = _sid(x_session_id, response)
     review = build_review(game)
     return {"session_id": sid, **review}
+
+
+@router.get("/mistakes")
+def mistake_book():
+    return {"variant": "xiangqi", "items": list_mistakes("xiangqi")}
+
+
+@router.post("/mistakes/{mistake_id}/load")
+def load_mistake(
+    mistake_id: str,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    item = get_mistake(mistake_id)
+    if not item or item.get("variant") != "xiangqi":
+        raise HTTPException(status_code=404, detail="错题不存在")
+    sid, game = _sid(x_session_id, response)
+    try:
+        parse_fen(item["fen_before"])
+        game.reset(item["fen_before"])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    sessions.set_library(sid, {"id": None, "moves": [], "index": 0, "meta": None})
+    sessions.set_settings(
+        sid,
+        {"mode": "human_vs_human", "human_color": item.get("side") or "red", "red_ai": "engine"},
+    )
+    return {"status": "ok", "mistake": item, **_state(game, sid)}
 
 
 @router.post("/game/post-review")

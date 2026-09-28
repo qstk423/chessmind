@@ -9,11 +9,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.api.online import router as chess_rooms_router
 from src.api.routes import orchestrator, router as chess_router
 from src.guardrails import check_rate_limit
 from src.storage import init_db
-from src.xiangqi.api.online import router as xiangqi_rooms_router
 from src.xiangqi.api.routes import router as xiangqi_router
 
 
@@ -91,21 +89,23 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
     if isinstance(exc, HTTPException):
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    if type(exc).__module__ == "zlib" and type(exc).__name__ == "error":
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "软件运行文件已损坏或被更新，请完全退出 ChessCouncil 后重新打开。"},
+        )
     return JSONResponse(
         status_code=500,
-        content={"detail": f"服务器内部错误：{type(exc).__name__}"},
+        content={"detail": "服务器运行异常，请重试；若持续出现，请重新启动 ChessCouncil。"},
     )
 
 
 # 国际象棋：正式前缀 + 兼容旧 /api 别名
 app.include_router(chess_router, prefix="/api/chess")
-app.include_router(chess_rooms_router, prefix="/api/chess")
 app.include_router(chess_router, prefix="/api")
-app.include_router(chess_rooms_router, prefix="/api")
 
 # 中国象棋
 app.include_router(xiangqi_router, prefix="/api/xiangqi")
-app.include_router(xiangqi_rooms_router, prefix="/api/xiangqi")
 
 frontend_path = Path(__file__).resolve().parent.parent / "frontend"
 

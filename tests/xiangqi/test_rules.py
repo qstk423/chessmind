@@ -55,6 +55,30 @@ def test_undo_restores_halfmove():
     assert "halfmove_before" in entry
 
 
+def test_opening_horses_are_not_marked_when_rooks_can_recapture():
+    hints = XiangqiGame().snapshot()
+    assert hints["threat_hints"]["red"] == {"capturable": [], "threatened": []}
+    assert hints["threat_hints"]["black"] == {"capturable": [], "threatened": []}
+
+
+def test_bottom_player_hints_exclude_protected_pieces():
+    game = XiangqiGame("r3k4/9/9/9/4P4/9/9/9/9/RR2K4 w - - 0 1")
+    before = game.fen()
+    hints = game.snapshot()
+    assert [0, 0] in hints["threat_hints"]["red"]["capturable"]
+    assert [9, 0] not in hints["threat_hints"]["red"]["threatened"]
+    assert [9, 0] not in hints["threat_hints"]["black"]["capturable"]
+    assert "a0a1" in hints["risky_uci"]
+    assert game.fen() == before  # 预判落点不能真的移动棋子
+
+
+def test_protected_landing_square_is_not_red():
+    game = XiangqiGame("r3k4/9/9/9/4P4/9/9/9/1R7/R3K4 w - - 0 1")
+    hints = game.snapshot()
+    assert "a0a1" in hints["legal_uci"]
+    assert "a0a1" not in hints["risky_uci"]
+
+
 def test_threefold_repetition_is_draw():
     game = XiangqiGame()
     key = game.position_key()

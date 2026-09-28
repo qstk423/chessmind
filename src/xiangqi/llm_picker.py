@@ -1,6 +1,7 @@
 """象棋 LLM 选着（GLM / 千问），失败由调用方回退引擎。"""
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 
 from src.agents.move_picker import XIANGQI_MOVE_PICKER_PROMPT, MovePickerAgent
@@ -32,7 +33,9 @@ def _cheap_null_retract(game: XiangqiGame, uci: str) -> bool:
     return False
 
 
-async def pick_xiangqi_move(game: XiangqiGame, *, which: Which = "llm") -> dict:
+async def pick_xiangqi_move(
+    game: XiangqiGame, *, which: Which = "llm", strength: str = "normal"
+) -> dict:
     all_legal = [mv.uci for mv in legal_moves(game.board, game.turn)]
     if not all_legal:
         return {"uci": None, "reason": "无合法着法", "source": "unavailable"}
@@ -51,11 +54,21 @@ async def pick_xiangqi_move(game: XiangqiGame, *, which: Which = "llm") -> dict:
 
     history = [m.get("uci") or "" for m in (game.history or []) if m.get("uci")]
     engine_hint = None
+    engine_candidates: list[tuple[str, int | None]] = []
     try:
-        from src.xiangqi.engine import best_move_pikafish, pikafish_available
+        from src.xiangqi.ai import PIKAFISH_DEPTH, PIKAFISH_MOVETIME_MS, PIKAFISH_MULTIPV
+        from src.xiangqi.engine import candidate_moves_pikafish, pikafish_available
 
         if pikafish_available():
-            engine_hint = best_move_pikafish(game.fen(), depth=16, movetime_ms=700)
+            level = strength if strength in PIKAFISH_DEPTH else "normal"
+            engine_candidates = await asyncio.to_thread(
+                candidate_moves_pikafish,
+                game.fen(),
+                depth=PIKAFISH_DEPTH[level],
+                movetime_ms=PIKAFISH_MOVETIME_MS[level],
+                multipv=PIKAFISH_MULTIPV[level],
+            )
+            engine_hint = engine_candidates[0][0] if engine_candidates else None
             if engine_hint and engine_hint not in legal:
                 if engine_hint not in all_legal:
                     engine_hint = None
@@ -63,7 +76,7 @@ async def pick_xiangqi_move(game: XiangqiGame, *, which: Which = "llm") -> dict:
         engine_hint = None
 
     picker = MovePickerAgent(client, model, system_prompt=XIANGQI_MOVE_PICKER_PROMPT)
-    return await picker.pick_move(
+    pick = await picker.pick_move(
         fen=game.fen(),
         legal_moves=legal,
         move_history=history[-16:],
@@ -73,3 +86,5 @@ async def pick_xiangqi_move(game: XiangqiGame, *, which: Which = "llm") -> dict:
         ),
         engine_hint=engine_hint,
     )
+    pick["engine_candidates"] = engine_candidates
+    return pick

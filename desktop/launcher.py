@@ -24,7 +24,12 @@ def bundle_root() -> Path:
 
 def application_dir() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
+        executable_dir = Path(sys.executable).resolve().parent
+        if sys.platform == "darwin" and executable_dir.name == "MacOS" and executable_dir.parent.name == "Contents":
+            # Finder apps keep their executable inside ChessCouncil.app/Contents/MacOS.
+            # A private config belongs beside the app, not inside the signed bundle.
+            return executable_dir.parent.parent.parent
+        return executable_dir
     return Path(__file__).resolve().parents[1]
 
 
@@ -36,6 +41,8 @@ def user_data_dir() -> Path:
         base = os.getenv("LOCALAPPDATA") or os.getenv("APPDATA")
         if base:
             return Path(base) / "ChessCouncil"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "ChessCouncil"
     return Path.home() / ".chesscouncil"
 
 
@@ -52,7 +59,10 @@ def prepare_environment() -> Path:
             load_dotenv(config_file, override=False)
 
     os.environ.setdefault("CHESSCOUNCIL_DATA_DIR", str(data_dir))
-    os.environ.setdefault("LLM_LOG_PATH", str(data_dir / "logs" / "llm_calls.jsonl"))
+    log_path = Path(os.getenv("LLM_LOG_PATH") or "logs/llm_calls.jsonl").expanduser()
+    if not log_path.is_absolute():
+        log_path = data_dir / log_path
+    os.environ["LLM_LOG_PATH"] = str(log_path)
 
     stockfish = bundle_root() / "bin" / (
         "stockfish.exe" if os.name == "nt" else "stockfish"
@@ -61,6 +71,12 @@ def prepare_environment() -> Path:
         configured = os.getenv("STOCKFISH_PATH")
         if not configured or not (Path(configured).is_file() or shutil.which(configured)):
             os.environ["STOCKFISH_PATH"] = str(stockfish)
+
+    pikafish = bundle_root() / "bin" / "pikafish"
+    if pikafish.is_file() and (bundle_root() / "bin" / "pikafish.nnue").is_file():
+        configured = os.getenv("PIKAFISH_PATH")
+        if not configured or not (Path(configured).is_file() or shutil.which(configured)):
+            os.environ["PIKAFISH_PATH"] = str(pikafish)
 
     logging.basicConfig(
         filename=str(data_dir / "desktop.log"),
@@ -107,10 +123,19 @@ def start_local_server():
 
 
 def run_self_test(origin: str) -> None:
-    for route in ("/chess/", "/xiangqi/", "/api/chess/health"):
+    for route in (
+        "/chess/", "/xiangqi/", "/api/chess/health", "/api/xiangqi/health",
+        "/api/xiangqi/game/review",
+    ):
         with urlopen(origin + route, timeout=10) as response:
             if response.status != 200:
                 raise RuntimeError(f"{route}: HTTP {response.status}")
+    if (bundle_root() / "bin" / "pikafish").is_file():
+        from src.xiangqi.engine import best_move_pikafish
+        from src.xiangqi.rules import START_FEN
+
+        if not best_move_pikafish(START_FEN, depth=8, movetime_ms=250):
+            raise RuntimeError("内置 Pikafish 自检失败")
 
 
 def main() -> int:
@@ -128,7 +153,7 @@ def main() -> int:
                 "ChessCouncil",
                 origin + "/",
                 width=1200,
-                height=760,
+                height=900,
                 min_size=(900, 600),
                 background_color="#17251d",
             )

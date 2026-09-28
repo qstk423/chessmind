@@ -154,17 +154,6 @@ function togglePlayback() {
   showToast('请先开 AI vs AI 对局，或加载名谱后再播放', 'error');
 }
 
-/** 联机房间 */
-let online = {
-  active: false,
-  roomId: null,
-  token: null,
-  color: null,
-  name: '',
-  ws: null,
-  reconnectTimer: null,
-};
-
 /** 名谱自动演示 */
 let libraryAuto = false;
 let libraryAutoTimer = null;
@@ -293,11 +282,13 @@ let challengeLevelsCache = [];
 
 /** 本局着法回放（机机象棋式着法列表） */
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-const LAST_ROOM_KEY = 'cc_last_room';
 let gameStartFen = START_FEN;
 let plyLog = []; // {number,san,uci,fen,classification?}
 let viewPly = 0; // 0=开局，n=第 n 步后
 let browsingHistory = false;
+const councilByPly = new Map();
+const pendingCouncilPly = new Set();
+const failedCouncilPly = new Set();
 
 const PIECE_GLYPH = {
   K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '♙',
@@ -410,13 +401,9 @@ function initBoard() {
 }
 
 function humanMayMove() {
+  if (reviewPlayer?.active) return false;
   if (busy || serverState.is_game_over) return false;
   if (browsingHistory) return false;
-  if (online.active) {
-    if (!online.color) return false;
-    const my = online.color === 'white' ? 'w' : 'b';
-    return game.turn() === my;
-  }
   if (serverState.mode === 'ai_vs_ai') return false;
   if (serverState.mode === 'human_vs_human') return true;
   // human_vs_ai：仅人类回合
@@ -494,6 +481,7 @@ function updatePlyNavLabel() {
 }
 
 function gotoPly(ply, { fromBrowse = true } = {}) {
+  reviewPlayer?.close();
   const max = plyLog.length;
   const target = Math.max(0, Math.min(max, ply));
   viewPly = target;
@@ -517,6 +505,11 @@ function gotoPly(ply, { fromBrowse = true } = {}) {
   }
   renderMoveList();
   updatePlyNavLabel();
+  if ($('#with-analysis').is(':checked') && target > 0) {
+    if (councilByPly.has(target)) updateAnalysis(councilByPly.get(target));
+    else if (pendingCouncilPly.has(target)) showCouncilPending(target);
+    else if (failedCouncilPly.has(target)) showCouncilFailure(target);
+  }
   if (browsingHistory) {
     $('#ai-meta').text('回放中 · 点「|&gt;」回到最新后再走棋');
   }
@@ -524,6 +517,7 @@ function gotoPly(ply, { fromBrowse = true } = {}) {
 }
 
 function jumpToFen(fen, meta) {
+  reviewPlayer?.close();
   if (meta && meta.ply === 0) {
     gotoPly(0);
     return;
@@ -612,30 +606,10 @@ async function submitHumanMove(uci) {
   busy = true;
   clearHintHighlights();
   try {
-    if (online.active) {
-      if (online.ws && online.ws.readyState === WebSocket.OPEN) {
-        online.ws.send(JSON.stringify({ type: 'move', uci }));
-      } else {
-        const r = await fetch(`${API}/rooms/${online.roomId}/move`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: online.token, uci }),
-        });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          alert(data.detail || '走子失败');
-          await syncOnlineState();
-          return;
-        }
-        applyOnlineMovePayload(data);
-      }
-      return;
-    }
-
     const useCouncil = $('#with-analysis').is(':checked');
     const h2h = serverState.mode === 'human_vs_human';
     const hva = serverState.mode === 'human_vs_ai';
-    // 人机：先落子再立刻让 AI 应着，Council 放到 AI 走完后异步跑，避免干等
+    // 落子不等待模型；每一手的固定局面在后台分别交给 Council。
     const blockOnCouncil = useCouncil && !h2h && !hva;
     if (blockOnCouncil) setProgress('Council 开会中', { cycleCouncil: true });
     const analysisMode = $('#analysis-mode').val() || 'fast';
@@ -656,13 +630,12 @@ async function submitHumanMove(uci) {
       return;
     }
     applyMoveResult(data);
+    if (useCouncil && hva) queueCouncilForPly(data);
     if (h2h && data.game_over) {
       await runPostGameReview();
     }
     if (!data.game_over && data.next_controller && data.next_controller !== 'human') {
-      await runAiStep({ nested: true, quick: hva });
-    } else if (hva && useCouncil && !data.game_over) {
-      queueCouncilRefresh();
+      await runAiStep({ nested: true });
     }
   } catch (err) {
     console.error('分析请求失败:', err);
@@ -743,6 +716,7 @@ function rememberStartFen(state) {
 }
 
 function applyServerState(state) {
+  reviewPlayer?.close();
   serverState = {
     mode: state.mode || 'human_vs_human',
     controller: state.controller,
@@ -813,6 +787,7 @@ function hideFinale() {
 
 function showFinale(finale) {
   if (!finale) return;
+  window.ChessCouncilCheckFlash?.reset();
   stopAuto();
   const id = finale.id || 'checkmate';
   const winnerLabel = finale.winner === 'white' ? '白方胜' : finale.winner === 'black' ? '黑方胜' : '和棋';
@@ -850,6 +825,7 @@ $('#btn-preview-finale').click(() => {
 });
 
 function applyMoveResult(data) {
+  reviewPlayer?.close();
   if (data.error) {
     console.error(data.error);
     return;
@@ -870,6 +846,14 @@ function applyMoveResult(data) {
 
   updateAnalysis(data);
   updateStatus();
+  if (uci && !data.game_over && game.in_check()) {
+    window.ChessCouncilCheckFlash?.show({
+      attacker: game.turn() === 'w' ? 'black' : 'white',
+      viewer: serverState.mode === 'human_vs_ai' ? serverState.human_color : null,
+      key: `${data.fen}|${uci}`,
+      variant: 'chess',
+    });
+  }
   if (data.ai) {
     const src = data.ai.source || '';
     const reason = data.ai.reason || '';
@@ -879,6 +863,9 @@ function applyMoveResult(data) {
     $('#ai-meta').text(`人类 ${data.move.san}`);
   }
   appendPlyFromMove(data);
+  if (data.mistake_saved?.id && !data.ai) {
+    showToast('这步已收进错题本，稍后可以回到落子前重练。');
+  }
   if (data.game_over) {
     stopAuto();
     if (!data.skip_finale) {
@@ -957,7 +944,7 @@ function paintLastMoveMarkers() {
 
 function selectPiece(square) {
   selectedSquare = square;
-  $('.square-55d63').removeClass('highlight-selected');
+  clearHighlights();
   $(`.square-55d63[data-square="${square}"]`).addClass('highlight-selected');
   highlightLegalMoves(square);
 }
@@ -968,18 +955,75 @@ function deselectPiece() {
 }
 
 function highlightLegalMoves(square) {
-  clearHighlights();
   const moves = game.moves({ square: square, verbose: true });
   moves.forEach(m => {
     const $sq = $(`.square-55d63[data-square="${m.to}"]`);
-    const piece = game.get(m.to);
-    $sq.addClass(piece ? 'highlight-capture' : 'highlight-move');
+    const capture = !!m.captured;
+    $sq.addClass(capture ? 'highlight-capture' : 'highlight-move');
+    if (moveLandsUnderCapture(m)) $sq.addClass('highlight-risk');
   });
+}
+
+function capturedSquare(move) {
+  if (!move.captured) return null;
+  // En passant captures the pawn beside the destination, not on it.
+  return move.flags.includes('e') ? `${move.to[0]}${move.from[1]}` : move.to;
+}
+
+function positionForSide(side) {
+  try {
+    const parts = game.fen().split(' ');
+    if (parts[1] !== side) {
+      parts[1] = side;
+      parts[3] = '-'; // En passant only belongs to the actual side to move.
+    }
+    return new Chess(parts.join(' '));
+  } catch (_) {
+    return null;
+  }
+}
+
+function isUnprotectedCapture(position, capture) {
+  const after = new Chess(position.fen());
+  if (!after.move({ from: capture.from, to: capture.to, promotion: capture.promotion || 'q' })) return false;
+  return !after.moves({ verbose: true }).some(reply => capturedSquare(reply) === capture.to);
+}
+
+function moveLandsUnderCapture(move) {
+  const future = new Chess(game.fen());
+  const played = future.move({ from: move.from, to: move.to, promotion: move.promotion || 'q' });
+  if (!played || played.piece === 'k') return false;
+  return future.moves({ verbose: true }).some(reply =>
+    capturedSquare(reply) === move.to && isUnprotectedCapture(future, reply)
+  );
+}
+
+function paintThreatHints() {
+  const $squares = $('#board .square-55d63');
+  $squares.removeClass('threat-capture threat-own');
+  if (!board || editMode || browsingHistory || serverState.mode === 'ai_vs_ai' ||
+      serverState.is_game_over || game.game_over()) return;
+  const bottom = orientation === 'black' ? 'b' : 'w';
+  const opponent = bottom === 'w' ? 'b' : 'w';
+  const bottomPosition = positionForSide(bottom);
+  const opponentPosition = positionForSide(opponent);
+  for (const move of bottomPosition?.moves({ verbose: true }) || []) {
+    const target = capturedSquare(move);
+    if (target && game.get(target)?.type !== 'k' && isUnprotectedCapture(bottomPosition, move)) {
+      $squares.filter(`[data-square="${target}"]`).addClass('threat-capture');
+    }
+  }
+  for (const move of opponentPosition?.moves({ verbose: true }) || []) {
+    const target = capturedSquare(move);
+    if (target && game.get(target)?.type !== 'k' && isUnprotectedCapture(opponentPosition, move)) {
+      $squares.filter(`[data-square="${target}"]`).addClass('threat-own');
+    }
+  }
 }
 
 function clearHighlights() {
   $('.square-55d63').removeClass(
-    'highlight-selected highlight-move highlight-capture highlight-hint highlight-hint-to'
+    'highlight-selected highlight-move highlight-capture highlight-risk highlight-hint highlight-hint-to mistake-projection recommend-projection'
   );
   // 选中高亮清掉后，把上一步标记画回去
   paintLastMoveMarkers();
@@ -1131,6 +1175,9 @@ function clearRevealTimers() {
 
 function revealCouncilTabs(council) {
   clearRevealTimers();
+  const localFast = council.analysis_source === 'local_heuristic';
+  const firstDelay = localFast ? 30 : 180;
+  const stepDelay = localFast ? 45 : 220;
   const sequence = [
     ['tactical', () => $('#tab-tactical').html(renderOpinion(council.agents.tactical, '战术'))],
     ['strategic', () => $('#tab-strategic').html(renderOpinion(council.agents.strategic, '战略'))],
@@ -1164,7 +1211,7 @@ function revealCouncilTabs(council) {
       const el = $(`#tab-${tab}`);
       el.addClass('is-revealing');
       setTimeout(() => el.removeClass('is-revealing'), 450);
-    }, 180 + i * 220));
+    }, firstDelay + i * stepDelay));
   });
 }
 
@@ -1213,17 +1260,12 @@ function updateAnalysis(data) {
 }
 
 function updateStatus() {
+  paintThreatHints();
   if (serverState.is_game_over || game.game_over()) {
     $('#game-status').text('对局结束');
     return;
   }
   const turn = game.turn() === 'w' ? '白方' : '黑方';
-  if (online.active) {
-    const mine = online.color === 'white' ? '白' : online.color === 'black' ? '黑' : '?';
-    const myTurn = humanMayMove();
-    $('#game-status').text(`${turn}走棋 · 你执${mine}${myTurn ? ' · 轮到你' : ' · 等待对手'}`);
-    return;
-  }
   const ctrl = serverState.controller;
   const ctrlLabel =
     ctrl === 'llm' ? 'GLM' :
@@ -1281,11 +1323,12 @@ function newGamePayload() {
 }
 
 function resetPanels() {
+  window.ChessCouncilCheckFlash?.reset();
   game = new Chess();
-  orientation = 'white';
+  orientation = serverState.mode === 'human_vs_ai' && serverState.human_color === 'black' ? 'black' : 'white';
   if (board) {
     board.position('start', false);
-    board.orientation('white');
+    board.orientation(orientation);
   }
   selectedSquare = null;
   clearLastMoveMarkers();
@@ -1306,25 +1349,19 @@ function resetPanels() {
   renderMoveList();
   updatePlyNavLabel();
   analysisGen += 1;
+  councilByPly.clear();
+  pendingCouncilPly.clear();
+  failedCouncilPly.clear();
   updateStatus();
 }
 
 async function startNewGame() {
+  reviewPlayer?.close();
+  $('#review-section').hide();
+  $('#review-result').empty();
+  reviewHighlights = [];
   stopAuto();
   hideFinale();
-  if (online.active) {
-    if (online.ws && online.ws.readyState === WebSocket.OPEN) {
-      online.ws.send(JSON.stringify({ type: 'reset' }));
-    } else {
-      await fetch(`${API}/rooms/${online.roomId}/reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: online.token }),
-      });
-      await syncOnlineState();
-    }
-    return;
-  }
   busy = true;
   try {
     const r = await fetch(`${API}/game/new`, {
@@ -1339,7 +1376,7 @@ async function startNewGame() {
     refreshModeControls();
     // 人机且人类执黑：AI 先走
     if (state.mode === 'human_vs_ai' && state.controller && state.controller !== 'human') {
-      await runAiStep({ nested: true, quick: true });
+      await runAiStep({ nested: true });
     } else if (state.mode === 'ai_vs_ai') {
       // 机机局直接自动连走，无需点「AI 一步」
       startAuto();
@@ -1352,61 +1389,79 @@ async function startNewGame() {
   }
 }
 
-function queueCouncilRefresh() {
+function showCouncilPending(ply) {
+  clearRevealTimers();
+  resetAgentCompare();
+  const localFast = ($('#analysis-mode').val() || 'fast') === 'fast';
+  $('#move-class').text(localFast ? `第${ply}步 · 本地快评中…` : `第${ply}步 · 理事会分析中…`).attr('class', 'move-class');
+  $('.tab-content').html(`<p class="placeholder">${localFast ? '本地引擎正在生成三种视角。' : '三位分析师正在评价本步，走棋可以继续。'}</p>`);
+  $('#ai-meta').text(localFast ? `第${ply}步已落子 · 本地快评中…` : `第${ply}步已落子 · Council 后台分析中…`);
+}
+
+function showCouncilFailure(ply) {
+  clearRevealTimers();
+  resetAgentCompare();
+  $('#move-class').text(`第${ply}步 · 分析未完成`).attr('class', 'move-class');
+  $('.tab-content').html('<p class="placeholder">本步理事会分析未完成，请检查模型连接后重试。</p>');
+  $('#ai-meta').text(`第${ply}步 Council 分析未完成`);
+}
+
+function queueCouncilForPly(moveResult) {
   if (!$('#with-analysis').is(':checked')) return;
   if (serverState.mode === 'human_vs_human') return;
-  const gen = ++analysisGen;
-  const sourceFen = game.fen();
-  const analysisMode = $('#analysis-mode').val() || 'fast';
-  $('#ai-meta').text('AI 已走完 · Council 后台分析中…');
-  fetch(`${API}/game/analyze-position`, {
+  const ply = moveResult?.move?.number;
+  const sourceFen = moveResult?.fen;
+  if (!Number.isInteger(ply) || !sourceFen || pendingCouncilPly.has(ply)) return;
+  const gen = analysisGen;
+  pendingCouncilPly.add(ply);
+  failedCouncilPly.delete(ply);
+  if (viewPly === ply) showCouncilPending(ply);
+  fetch(`${API}/game/analyze-ply`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ with_analysis: true, analysis_mode: analysisMode }),
+    body: JSON.stringify({ ply, analysis_mode: $('#analysis-mode').val() || 'fast' }),
   })
     .then((r) => r.json().then((data) => ({ ok: r.ok, data })))
     .then(({ ok, data }) => {
-      if (gen !== analysisGen) return;
-      if (game.fen() !== sourceFen) {
-        $('#ai-meta').text('棋局已变化，已忽略旧局面的分析');
+      if (gen !== analysisGen || plyLog[ply - 1]?.fen !== sourceFen) return;
+      pendingCouncilPly.delete(ply);
+      if (!ok || data.fen !== sourceFen || !data.analysis?.council) {
+        failedCouncilPly.add(ply);
+        if (viewPly === ply) showCouncilFailure(ply);
         return;
       }
-      if (!ok) {
-        $('#ai-meta').text('Council 分析未完成，请重试');
-        return;
+      councilByPly.set(ply, data);
+      if (viewPly === ply) {
+        updateAnalysis(data);
+        const localFast = data.analysis?.council?.analysis_source === 'local_heuristic';
+        $('#ai-meta').text(localFast ? `第${ply}步 本地快评完成` : `第${ply}步 Council 深评完成`);
       }
-      applyMoveResult({
-        ...data,
-        move: { san: '局面分析', uci: '', number: serverState.move_count || 0 },
-      });
-      $('#ai-meta').text('Council 已更新');
     })
     .catch(() => {
-      if (gen === analysisGen && game.fen() === sourceFen) {
-        $('#ai-meta').text('Council 分析请求失败，请重试');
-      }
+      if (gen !== analysisGen || plyLog[ply - 1]?.fen !== sourceFen) return;
+      pendingCouncilPly.delete(ply);
+      failedCouncilPly.add(ply);
+      if (viewPly === ply) showCouncilFailure(ply);
     });
 }
 
 async function runAiStep(opts = {}) {
+  if (reviewPlayer?.active) return;
   const nested = !!opts.nested;
-  const quick = !!opts.quick || autoPlay;
   if (busy && !autoPlay && !nested) return;
   if (serverState.is_game_over) return;
   if (serverState.controller === 'human') return;
 
   busy = true;
   const wantCouncil = $('#with-analysis').is(':checked');
-  // 人机自动应着 / 机机连走：先快速落子，Council 异步补，避免干等
-  const useCouncil = wantCouncil && !quick;
-  $('#game-status').text(useCouncil ? 'AI + Council…' : 'AI 思考中…');
-  if (useCouncil) setProgress('AI 走子与 Council 开会', { cycleCouncil: true });
-  else if (!autoPlay) setProgress('AI 思考中…');
+  // AI 落子永不等待模型分析；否则手动「AI 一步」会看起来像棋盘卡死。
+  $('#game-status').text('AI 思考中…');
+  if (!autoPlay) setProgress('AI 思考中…');
   try {
     const r = await fetch(`${API}/game/ai-step`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ with_analysis: useCouncil }),
+      body: JSON.stringify({ with_analysis: false }),
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -1417,9 +1472,7 @@ async function runAiStep(opts = {}) {
       return;
     }
     applyMoveResult(data);
-    if (quick && wantCouncil && !autoPlay && !serverState.is_game_over) {
-      queueCouncilRefresh();
-    }
+    if (wantCouncil && !autoPlay) queueCouncilForPly(data);
   } catch (err) {
     console.error(err);
     stopAuto();
@@ -1493,8 +1546,11 @@ $(document).on('keydown', (e) => {
   }
 });
 $('#btn-undo').click(async () => {
-  if (busy || online.active) return;
+  if (busy) return;
   analysisGen += 1;
+  councilByPly.clear();
+  pendingCouncilPly.clear();
+  failedCouncilPly.clear();
   setProgress(null);
   busy = true;
   clearHintHighlights();
@@ -1535,7 +1591,7 @@ $('#btn-undo').click(async () => {
   }
 });
 $('#btn-hint').click(async () => {
-  if (busy || online.active || serverState.is_game_over) return;
+  if (busy || serverState.is_game_over) return;
   if (!humanMayMove() && serverState.mode !== 'human_vs_human') {
     $('#ai-meta').text('当前不是你的回合');
     return;
@@ -1563,6 +1619,7 @@ $('#btn-flip').click(() => {
   if (!board) return;
   orientation = orientation === 'white' ? 'black' : 'white';
   board.orientation(orientation);
+  paintThreatHints();
   requestAnimationFrame(() => paintLastMoveMarkers());
 });
 $('#btn-ai-step').click(async () => {
@@ -1599,11 +1656,31 @@ $('#btn-review').click(async () => {
   }
 });
 
+let reviewHighlights = [];
+const reviewPlayer = window.ChessCouncilReview?.create({
+  canOpen: () => !busy,
+  onStart: () => { stopAuto(); stopLibraryAuto(); selectedSquare = null; clearHighlights(); },
+  render: ({ move, phase }) => {
+    if (board) board.position(phase === 'before' ? move.fen_before : move.fen_after, false);
+    clearHighlights();
+    if (phase === 'after' && move.uci) markLastMove(move.uci.slice(0, 2), move.uci.slice(2, 4));
+    else { lastMoveFrom = null; lastMoveTo = null; paintLastMoveMarkers(); }
+    $('#ai-meta').text('关键招数回看中 · 返回对局后可继续走棋');
+  },
+  onExit: () => { gotoPly(plyLog.length); $('#ai-meta').text('已返回当前对局'); },
+  controls: '#btn-undo, #btn-hint, #btn-ai-step, #btn-play-toggle, #btn-lib-step, #btn-lib-auto, #btn-lib-ai, #btn-analyze-pos, .setup-bar select, #btn-ply-start, #btn-ply-prev, #btn-ply-next, #btn-ply-end, .move-ply',
+  notify: message => showToast(message, 'error'),
+});
+$('#review-result').on('click', '.review-jump', function () {
+  reviewPlayer?.open(reviewHighlights[Number(this.dataset.reviewIndex)], this);
+});
+
 async function showReviewFromData(data) {
   if (!data) return;
+  reviewHighlights = data.highlights || [];
   const narr = (data.narrative || []).map(t => `<li>${escapeHtml(t)}</li>`).join('');
-  const highs = (data.highlights || []).map(h =>
-    `<li>第${escapeHtml(String(h.number))}步 ${escapeHtml(h.san)} · ${escapeHtml(h.classification)} · 争议 ${Math.round((h.disagreement_score || 0) * 100)}%</li>`
+  const highs = reviewHighlights.map((h, index) =>
+    `<li><button type="button" class="review-jump" data-review-index="${index}">第${escapeHtml(String(h.number))}步 ${escapeHtml(h.san)} · 还原棋盘</button> · ${escapeHtml(h.classification)} · 争议 ${Math.round((h.disagreement_score || 0) * 100)}%</li>`
   ).join('');
   const debates = (data.debates || []).map(d =>
     `<li>第${escapeHtml(String(d.number))}步 ${escapeHtml(d.san)} → 仲裁 ${escapeHtml(d.verdict || '—')}</li>`
@@ -1618,7 +1695,7 @@ async function showReviewFromData(data) {
       ${renderAccuracyCard(data.accuracy)}
       ${renderEvalCurveChart(data.eval_curve || [])}
       <p><strong>叙事</strong></p><ul>${narr || '<li>暂无</li>'}</ul>
-      <p><strong>关键局面</strong></p><ul>${highs || '<li>暂无</li>'}</ul>
+      <p><strong>关键招数</strong></p><p class="review-help">点击着法还原落子后的局面，可对照落子前后；不会改变当前对局。</p><ul>${highs || '<li>暂无关键招数</li>'}</ul>
       <p><strong>辩论回合</strong></p><ul>${debates || '<li>本局未触发辩论</li>'}</ul>
       <pre style="white-space:pre-wrap;font-size:0.78rem;opacity:0.8">${escapeHtml(data.pgn || '')}</pre>
     </div>`);
@@ -1913,7 +1990,7 @@ $('#btn-pitch-fast').click(async () => {
 });
 
 function switchWorkspace(panelId) {
-  const map = { play: 'index.html', learn: 'learn.html', online: 'online.html', tools: 'tools.html', more: 'tools.html' };
+  const map = { play: 'index.html', learn: 'learn.html', tools: 'tools.html', more: 'tools.html' };
   const id = panelId === 'more' ? 'tools' : panelId;
   const href = map[id];
   if (href) location.href = href;
@@ -2444,6 +2521,36 @@ $('#btn-analyze-pgn').click(async () => {
   }
 });
 
+$('#btn-import-fen').click(async () => {
+  const fen = String($('#fen-input').val() || '').trim();
+  if (!fen) {
+    $('#fen-import-status').text('请先粘贴 FEN。');
+    return;
+  }
+  const button = $('#btn-import-fen');
+  button.prop('disabled', true).text('加载中…');
+  $('#fen-import-status').text('正在验证局面…');
+  try {
+    const response = await fetch(`${API}/game/load-fen`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fen, free_play: true }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      const detail = data.detail || data;
+      $('#fen-import-status').text(`加载失败：${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
+      return;
+    }
+    $('#fen-import-status').text('局面已加载，正在打开棋盘…');
+    goToPlay({ kind: 'sync', freePlay: true, title: 'FEN 局面 · 自由推演（双方可走）' });
+  } catch (error) {
+    $('#fen-import-status').text('加载失败，请检查服务是否运行。');
+  } finally {
+    button.prop('disabled', false).text('加载局面');
+  }
+});
+
 function stopLibraryAuto() {
   libraryAuto = false;
   if (libraryAutoTimer) {
@@ -2480,10 +2587,6 @@ function updateLibraryChrome(lib) {
 }
 
 async function loadLibraryItem(itemId, { mode, forAi, thenAuto, thenAnalyze } = {}) {
-  if (online.active) {
-    alert('请先退出联机房间，再加载名局/残局');
-    return;
-  }
   stopAuto();
   stopLibraryAuto();
   hideFinale();
@@ -2807,10 +2910,6 @@ function renderChallengeList() {
 }
 
 async function startChallengeLevel(lv) {
-  if (online.active) {
-    alert('请先退出联机');
-    return;
-  }
   stopAuto();
   stopLibraryAuto();
   hideFinale();
@@ -2875,16 +2974,95 @@ async function startChallengeLevel(lv) {
   $('#ai-meta').text(`闯关第 ${lv.level} 关 · ${lv.title}`);
 }
 
+let mistakeBookCache = [];
+let mistakeBookFilter = '';
+
+function mistakeLabel(cls) {
+  return ({ inaccuracy: '缓着', mistake: '漏着', blunder: '大漏' })[cls] || '差招';
+}
+
+function formatMistakeTime(value) {
+  const date = new Date(value || '');
+  return Number.isNaN(date.getTime()) ? '最近对局' : date.toLocaleDateString('zh-CN');
+}
+
+function renderMistakeBook() {
+  const box = $('#mistake-list');
+  if (!box.length) return;
+  const items = mistakeBookFilter
+    ? mistakeBookCache.filter((item) => item.classification === mistakeBookFilter)
+    : mistakeBookCache;
+  $('#mistake-summary').text(`${mistakeBookCache.length} 道待练`);
+  $('#mistake-status').text(items.length ? `当前显示 ${items.length} 道` : '');
+  if (!items.length) {
+    box.html(`<div class="mistake-empty">${mistakeBookCache.length ? '这个等级暂时没有错题。' : '还没有错题。完成对局后，缓着、漏着和大漏会自动来到这里。'}</div>`);
+    return;
+  }
+  box.html(items.map((item) => {
+    const repeated = Number(item.repeat_count || 1);
+    const recommendation = item.recommended_san || item.recommended_uci || '重新比较候选着';
+    return `
+      <article class="mistake-row">
+        <div class="mistake-row-main">
+          <div class="mistake-row-title">
+            <span class="mistake-severity ${escapeHtml(item.classification)}">${mistakeLabel(item.classification)}</span>
+            <strong>实战 ${escapeHtml(item.played_san || item.played_uci || '—')} → 建议 ${escapeHtml(recommendation)}</strong>
+          </div>
+          <p class="mistake-row-copy">${escapeHtml(item.coach || '回到落子前，重新检查对手威胁和候选着。')}</p>
+          <div class="mistake-row-meta">${escapeHtml(item.side === 'black' ? '黑方' : '白方')} · ${formatMistakeTime(item.updated_at)}${repeated > 1 ? ` · 重复 ${repeated} 次` : ''}</div>
+        </div>
+        <button type="button" class="accent mistake-project" data-mistake-id="${escapeHtml(item.id)}">投影到棋盘</button>
+      </article>`;
+  }).join(''));
+  box.find('.mistake-project').on('click', async function () {
+    const id = $(this).attr('data-mistake-id');
+    const item = mistakeBookCache.find((entry) => entry.id === id);
+    $(this).prop('disabled', true).text('正在还原…');
+    try {
+      const response = await fetch(`${API}/mistakes/${encodeURIComponent(id)}/load`, { method: 'POST' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(apiErrorText(data, '错题加载失败'));
+      goToPlay({
+        kind: 'mistake',
+        title: `错题复练 · ${item?.played_san || item?.played_uci || ''}`,
+        freePlay: true,
+        orientBlack: item?.side === 'black',
+        mistake: item,
+      });
+    } catch (error) {
+      showToast(error.message || '错题加载失败', 'error');
+      $(this).prop('disabled', false).text('投影到棋盘');
+    }
+  });
+}
+
+async function loadMistakeBook() {
+  const box = $('#mistake-list');
+  if (!box.length) return;
+  box.html('<div class="mistake-empty">正在整理错题…</div>');
+  try {
+    const response = await fetch(`${API}/mistakes`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(apiErrorText(data, '错题本加载失败'));
+    mistakeBookCache = data.items || [];
+    renderMistakeBook();
+  } catch (error) {
+    box.html(`<div class="mistake-empty">${escapeHtml(error.message || '错题本加载失败，请稍后重试。')}</div>`);
+  }
+}
+
 $('.learn-mode-tab').click(function () {
   const mode = $(this).attr('data-learn');
   $('.learn-mode-tab').removeClass('active').attr({ 'aria-selected': 'false', tabindex: '-1' });
   $(this).addClass('active').attr({ 'aria-selected': 'true', tabindex: '0' });
+  $('#learn-library, #learn-challenge, #learn-mistakes').attr('hidden', true);
   if (mode === 'challenge') {
-    $('#learn-library').attr('hidden', true);
     $('#learn-challenge').removeAttr('hidden');
     loadChallengeList();
+  } else if (mode === 'mistakes') {
+    $('#learn-mistakes').removeAttr('hidden');
+    loadMistakeBook();
   } else {
-    $('#learn-challenge').attr('hidden', true);
     $('#learn-library').removeAttr('hidden');
     loadLibraryList();
   }
@@ -2915,288 +3093,22 @@ $('.lib-filter').click(function () {
   libraryFilter = $(this).attr('data-cat') || '';
   loadLibraryList();
 });
+$('.mistake-filter').click(function () {
+  $('.mistake-filter').removeClass('active');
+  $(this).addClass('active');
+  mistakeBookFilter = $(this).attr('data-mistake-class') || '';
+  renderMistakeBook();
+});
 $('#btn-lib-step').click(() => libraryStepOnce());
 $('#btn-lib-auto').click(() => startLibraryAuto());
 $('#btn-lib-stop').click(() => stopLibraryAuto());
 $('#btn-lib-ai').click(() => {
-  if (online.active) return;
   $('#game-mode').val('ai_vs_ai');
   $('#with-analysis').prop('checked', false);
   autoDelayMs = readPlaybackSpeedMs();
   refreshModeControls();
   startAuto();
 });
-
-function roomShareUrl(roomId) {
-  return new URL(`index.html?room=${encodeURIComponent(roomId)}`, window.location.href).toString();
-}
-
-function saveOnlineSession() {
-  if (!online.roomId || !online.token) return;
-  localStorage.setItem(
-    `chesscouncil_room_${online.roomId}`,
-    JSON.stringify({ token: online.token, color: online.color, name: online.name })
-  );
-  try {
-    sessionStorage.setItem(LAST_ROOM_KEY, online.roomId);
-  } catch (_) {}
-}
-
-function loadOnlineSession(roomId) {
-  try {
-    return JSON.parse(localStorage.getItem(`chesscouncil_room_${roomId}`) || 'null');
-  } catch (_) {
-    return null;
-  }
-}
-
-function updateOnlineChrome() {
-  const bar = $('#online-bar');
-  if (!online.active) {
-    bar.removeClass('is-online');
-    if (PAGE === 'play') bar.prop('hidden', true);
-    else {
-      bar.prop('hidden', false);
-      $('#online-status').text('本地模式 · 可开房间用手机互下');
-    }
-    $('#btn-room-copy, #btn-room-leave').prop('hidden', PAGE === 'play');
-    $('#btn-room-create, #btn-room-join').prop('disabled', false);
-    return;
-  }
-  bar.prop('hidden', false).addClass('is-online');
-  const colorLabel = online.color === 'white' ? '白' : '黑';
-  $('#online-status').text(`房间 ${online.roomId} · 你执${colorLabel} · 已连接`);
-  $('#online-room-code').val(online.roomId);
-  $('#btn-room-copy, #btn-room-leave').prop('hidden', false);
-}
-
-function applyOnlineBoardState(state) {
-  if (!state) return;
-  serverState.mode = 'human_vs_human';
-  serverState.controller = 'human';
-  serverState.is_game_over = !!state.is_game_over;
-  serverState.human_color = online.color || 'white';
-  try {
-    game.load(state.fen);
-  } catch (_) {
-    game.reset();
-  }
-  orientation = online.color === 'black' ? 'black' : 'white';
-  if (board) {
-    board.position(state.fen, false);
-    board.orientation(orientation);
-  }
-  selectedSquare = null;
-  clearHighlights();
-  updateStatus();
-  const seats = state.seats || {};
-  const w = seats.white ? `${seats.white.name}${seats.white.connected ? '' : '(离线)'}` : '空位';
-  const b = seats.black ? `${seats.black.name}${seats.black.connected ? '' : '(离线)'}` : '空位';
-  $('#ai-meta').text(`联机 ${online.roomId} · 白:${w} · 黑:${b}`);
-}
-
-function applyOnlineMovePayload(data) {
-  const state = data.state || {};
-  applyOnlineBoardState(state);
-  const mv = data.move;
-  if (mv && mv.uci && mv.uci.length >= 4) {
-    markLastMove(mv.uci.slice(0, 2), mv.uci.slice(2, 4));
-    appendPlyFromMove({
-      move: {
-        number: mv.number || plyLog.length + 1,
-        san: mv.san || mv.uci,
-        uci: mv.uci,
-      },
-      fen: state.fen,
-    });
-  } else if (state.moves) {
-    syncPlyLogFromMoves(state.moves);
-  }
-  busy = false;
-  if (state.is_game_over) {
-    showFinale(data.finale || inferFinaleClient({ game_over: true, result: state.result }));
-  }
-}
-
-async function syncOnlineState() {
-  if (!online.roomId) return;
-  const state = await fetch(`${API}/rooms/${online.roomId}`).then((r) => r.json());
-  applyOnlineBoardState(state);
-  if (state.moves) syncPlyLogFromMoves(state.moves);
-}
-
-function disconnectOnlineWs() {
-  if (online.reconnectTimer) {
-    clearTimeout(online.reconnectTimer);
-    online.reconnectTimer = null;
-  }
-  if (online.ws) {
-    try {
-      online.ws.close();
-    } catch (_) {}
-    online.ws = null;
-  }
-}
-
-function connectOnlineWs() {
-  disconnectOnlineWs();
-  if (!online.roomId || !online.token) return;
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(
-    `${proto}://${location.host}${API}/rooms/${online.roomId}/ws?token=${encodeURIComponent(online.token)}`
-  );
-  online.ws = ws;
-  ws.onopen = () => {
-    updateOnlineChrome();
-    $('#online-status').text(`房间 ${online.roomId} · 实时已连接`);
-  };
-  ws.onmessage = (ev) => {
-    let msg;
-    try {
-      msg = JSON.parse(ev.data);
-    } catch (_) {
-      return;
-    }
-    if (msg.type === 'hello' || msg.type === 'state' || msg.type === 'peer') {
-      applyOnlineBoardState(msg.state);
-      return;
-    }
-    if (msg.type === 'move') {
-      applyOnlineMovePayload(msg);
-      return;
-    }
-    if (msg.type === 'reset') {
-      hideFinale();
-      clearLastMoveMarkers();
-      applyOnlineBoardState(msg.state);
-      syncPlyLogFromMoves((msg.state && msg.state.moves) || []);
-      return;
-    }
-    if (msg.type === 'error') {
-      busy = false;
-      $('#ai-meta').text(msg.message || '联机错误');
-      syncOnlineState();
-    }
-  };
-  ws.onclose = () => {
-    if (!online.active) return;
-    $('#online-status').text(`房间 ${online.roomId} · 连接断开，重连中…`);
-    online.reconnectTimer = setTimeout(connectOnlineWs, 1200);
-  };
-}
-
-async function enterOnlineRoom(session) {
-  stopAuto();
-  hideFinale();
-  online.active = true;
-  online.roomId = session.room_id;
-  online.token = session.token;
-  online.color = session.color;
-  online.name = session.name || $('#online-name').val() || '玩家';
-  saveOnlineSession();
-  $('#game-mode').val('human_vs_human');
-  refreshModeControls();
-  applyOnlineBoardState(session.state);
-  syncPlyLogFromMoves((session.state && session.state.moves) || []);
-  updateOnlineChrome();
-  connectOnlineWs();
-  if (PAGE !== 'play') {
-    location.href = `index.html?room=${encodeURIComponent(online.roomId)}`;
-    return;
-  }
-  const u = new URL(window.location.href);
-  u.searchParams.set('room', online.roomId);
-  history.replaceState(null, '', u.toString());
-}
-
-function leaveOnlineRoom() {
-  online.active = false;
-  disconnectOnlineWs();
-  online.roomId = null;
-  online.token = null;
-  online.color = null;
-  try {
-    sessionStorage.removeItem(LAST_ROOM_KEY);
-  } catch (_) {}
-  updateOnlineChrome();
-  const u = new URL(window.location.href);
-  u.searchParams.delete('room');
-  history.replaceState(null, '', u.toString());
-  if (PAGE === 'play' && board) startNewGame();
-}
-
-async function joinRoomByCode(code, name) {
-  code = (code || '').trim().toUpperCase();
-  name = (name || $('#online-name').val() || '玩家').trim();
-  if (!code) {
-    alert('请输入房间码');
-    return false;
-  }
-  const cached = loadOnlineSession(code);
-  if (cached && cached.token) {
-    try {
-      const state = await fetch(`${API}/rooms/${code}`).then((r) => {
-        if (!r.ok) throw new Error('gone');
-        return r.json();
-      });
-      await enterOnlineRoom({
-        room_id: code,
-        token: cached.token,
-        color: cached.color,
-        name: cached.name || name,
-        state,
-      });
-      return true;
-    } catch (_) {
-      /* fallthrough */
-    }
-  }
-  const r = await fetch(`${API}/rooms/${code}/join`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
-  const data = await r.json();
-  if (!r.ok) {
-    alert(typeof data.detail === 'string' ? data.detail : '加入失败');
-    return false;
-  }
-  await enterOnlineRoom(data);
-  return true;
-}
-
-$('#btn-room-create').click(async () => {
-  const name = ($('#online-name').val() || '玩家').trim();
-  const r = await fetch(`${API}/rooms`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, color: 'white' }),
-  });
-  const data = await r.json();
-  if (!r.ok) {
-    alert(data.detail || '创建失败');
-    return;
-  }
-  await enterOnlineRoom(data);
-  alert(`房间 ${data.room_id} 已创建。点「复制链接」发给对手。`);
-});
-
-$('#btn-room-join').click(async () => {
-  await joinRoomByCode($('#online-room-code').val());
-});
-
-$('#btn-room-copy').click(async () => {
-  if (!online.roomId) return;
-  const link = roomShareUrl(online.roomId);
-  try {
-    await navigator.clipboard.writeText(link);
-    $('#ai-meta').text('房间链接已复制');
-  } catch (_) {
-    prompt('复制房间链接', link);
-  }
-});
-
-$('#btn-room-leave').click(() => leaveOnlineRoom());
 
 async function refreshHealthBanner() {
   try {
@@ -3226,6 +3138,11 @@ async function refreshHealthBanner() {
 async function applyPlayHandoff(handoff) {
   if (!handoff || !board) return;
 
+  if (handoff.freePlay) {
+    $('#game-mode').val('human_vs_human');
+    refreshModeControls();
+  }
+
   if (handoff.orientBlack) {
     orientation = 'black';
     board.orientation('black');
@@ -3250,6 +3167,26 @@ async function applyPlayHandoff(handoff) {
         ? `闯关第 ${challengeState.level} 关 · ${challengeState.title}`
         : handoff.title || '闯关'
     );
+  } else if (handoff.kind === 'mistake') {
+    const item = handoff.mistake || {};
+    $('#game-mode').val('human_vs_human');
+    $('#with-analysis').prop('checked', false);
+    refreshModeControls();
+    clearHighlights();
+    const wrong = item.played_uci || '';
+    const recommended = item.recommended_uci || '';
+    if (wrong.length >= 4) {
+      selectedSquare = wrong.slice(0, 2);
+      markLastMove(wrong.slice(0, 2), wrong.slice(2, 4));
+      $(`#board .square-55d63[data-square="${wrong.slice(0, 2)}"]`).addClass('highlight-selected');
+      $(`#board .square-55d63[data-square="${wrong.slice(2, 4)}"]`).addClass('mistake-projection');
+      highlightLegalMoves(wrong.slice(0, 2));
+    }
+    if (recommended.length >= 4) {
+      $(`#board .square-55d63[data-square="${recommended.slice(2, 4)}"]`).addClass('recommend-projection');
+    }
+    $('#ai-meta').text(`错题复练 · 红圈是实战落点，绿圈是推荐落点 · 请重新走一步`);
+    showToast('错题已投影：先自己计算，再尝试推荐路线。');
   } else if (handoff.kind === 'ai-auto') {
     $('#game-mode').val('ai_vs_ai');
     refreshModeControls();
@@ -3294,26 +3231,7 @@ async function bootPlay() {
   });
 
   const handoff = consumeHandoff();
-  const params = new URLSearchParams(location.search);
-  const lastRoom = (() => {
-    try {
-      return sessionStorage.getItem(LAST_ROOM_KEY);
-    } catch (_) {
-      return null;
-    }
-  })();
-  const roomParam = params.get('room') || (!handoff ? lastRoom : null);
-
-  if (roomParam) {
-    $('#online-room-code').val(roomParam.toUpperCase());
-    const ok = await joinRoomByCode(roomParam);
-    if (!ok) {
-      try {
-        sessionStorage.removeItem(LAST_ROOM_KEY);
-      } catch (_) {}
-      await startNewGame();
-    }
-  } else if (handoff && (handoff.kind === 'demo' || handoff.kind === 'ai-fast')) {
+  if (handoff && (handoff.kind === 'demo' || handoff.kind === 'ai-fast')) {
     if (handoff.kind === 'ai-fast') {
       await applyPlayHandoff(handoff);
     } else {
@@ -3321,7 +3239,7 @@ async function bootPlay() {
       await applyPlayHandoff(handoff);
     }
     return;
-  } else if (handoff && ['sync', 'ai-auto', 'lib-auto', 'challenge', 'analyze'].includes(handoff.kind)) {
+  } else if (handoff && ['sync', 'ai-auto', 'lib-auto', 'challenge', 'analyze', 'mistake'].includes(handoff.kind)) {
     try {
       await syncFromServer();
     } catch (_) {
@@ -3345,16 +3263,6 @@ async function bootLearn() {
   } catch (_) {}
 }
 
-async function bootOnline() {
-  applyPrefs();
-  const roomParam = new URLSearchParams(location.search).get('room');
-  if (roomParam) {
-    $('#online-room-code').val(roomParam.toUpperCase());
-    const ok = await joinRoomByCode(roomParam);
-    if (!ok) $('#online-status').text('邀请房间加入失败，请核对房间码');
-  }
-}
-
 async function bootTools() {
   applyPrefs();
   await loadDemos();
@@ -3371,8 +3279,6 @@ $(document).ready(async () => {
     await refreshHealthBanner();
   } else if (PAGE === 'learn') {
     await bootLearn();
-  } else if (PAGE === 'online') {
-    await bootOnline();
   } else if (PAGE === 'tools') {
     await bootTools();
   }

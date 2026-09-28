@@ -8,8 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=mac1">
   <link rel="stylesheet" href="/shared/variant-switch.css">
+  <link rel="stylesheet" href="/shared/check-flash.css?v=2">
+  <link rel="stylesheet" href="/shared/review-playback.css?v=1">
 </head>
 <body class="page-play" data-page="play">
 <div class="app-shell">
@@ -76,17 +78,6 @@
         </label>
         <button class="accent setup-new" id="new-game" type="button">新对局</button>
       </div>
-      <div class="online-bar" id="online-bar" hidden>
-        <div class="online-copy">
-          <strong>联机</strong>
-          <span id="online-bar-status">联机中</span>
-        </div>
-        <div class="online-controls">
-          <button type="button" id="btn-room-reset">重置棋局</button>
-          <button type="button" id="btn-room-leave">退出联机</button>
-        </div>
-      </div>
-
       <div class="player-row top">
         <span class="avatar black">将</span>
         <div><strong id="top-name">黑方</strong><small id="top-state">等待</small></div>
@@ -99,6 +90,14 @@
         <div class="board-tip" id="board-tip" hidden role="status" aria-live="polite">
           <strong id="board-tip-title">被将军了</strong>
           <span id="board-tip-body">走这一步会送死，必须先应将。</span>
+        </div>
+      </div>
+      <div class="review-playback-bar" id="review-playback-bar" hidden role="status" aria-live="polite">
+        <span id="review-playback-label">关键着回放</span>
+        <div class="review-playback-actions">
+          <button id="review-before" type="button">落子前</button>
+          <button id="review-after" type="button">落子后</button>
+          <button id="review-exit" type="button">返回对局</button>
         </div>
       </div>
 
@@ -215,7 +214,6 @@
 <nav class="app-tabbar" aria-label="主导航">
   <a class="tabbar-item is-active" href="index.html" aria-current="page">对弈</a>
   <a class="tabbar-item" href="learn.html">学习</a>
-  <a class="tabbar-item" href="online.html">联机</a>
   <a class="tabbar-item" href="tools.html">工具</a>
 </nav>
 
@@ -242,6 +240,8 @@
 </div>
 
 <script src="/shared/variant-switch.js"></script>
-  <script src="app.js?v=25"></script>
+  <script src="/shared/check-flash.js?v=2"></script>
+  <script src="/shared/review-playback.js?v=1"></script>
+  <script src="app.js?v=31"></script>
 </body>
 </html>

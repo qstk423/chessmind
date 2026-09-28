@@ -113,18 +113,20 @@ def _ensure_engine() -> subprocess.Popen[str]:
     return _proc
 
 
-def best_move_pikafish(
+def candidate_moves_pikafish(
     fen: str,
     *,
     depth: int = 18,
     movetime_ms: int | None = None,
-) -> str | None:
-    """同步问引擎最佳着法；失败返回 None。"""
+    multipv: int = 1,
+) -> list[tuple[str, int | None]]:
+    """返回引擎候选着及相对行棋方的厘兵评分。"""
     with _lock:
         try:
             proc = _ensure_engine()
             assert proc.stdin and proc.stdout
             fen_cmd = fen.strip()
+            proc.stdin.write(f"setoption name MultiPV value {max(1, min(5, int(multipv)))}\n")
             proc.stdin.write("ucinewgame\n")
             proc.stdin.write("isready\n")
             proc.stdin.flush()
@@ -145,18 +147,36 @@ def best_move_pikafish(
             proc.stdin.write(f"go movetime {int(movetime_ms)}\n")
             proc.stdin.flush()
             best: str | None = None
+            candidates: dict[int, tuple[str, int | None]] = {}
             deadline = time.monotonic() + max(3.0, movetime_ms / 1000.0 + 2.5)
             while time.monotonic() < deadline:
                 line = proc.stdout.readline()
                 if not line:
                     break
                 line = line.rstrip("\r\n")
+                if line.startswith("info ") and " pv " in line and " score " in line:
+                    parts = line.split()
+                    try:
+                        rank = int(parts[parts.index("multipv") + 1]) if "multipv" in parts else 1
+                        score_kind = parts[parts.index("score") + 1]
+                        score_value = int(parts[parts.index("score") + 2])
+                        score = score_value if score_kind == "cp" else (
+                            30_000 if score_value > 0 else -30_000
+                        ) if score_kind == "mate" else None
+                        candidates[rank] = (parts[parts.index("pv") + 1], score)
+                    except (ValueError, IndexError):
+                        pass
                 if line.startswith("bestmove"):
                     parts = line.split()
                     if len(parts) >= 2 and parts[1] not in ("(none)", "0000"):
                         best = parts[1]
                     break
-            return best
+            ordered = [candidates[rank] for rank in sorted(candidates)]
+            if best:
+                ordered = [(best, candidates.get(1, (best, None))[1])] + [
+                    item for item in ordered if item[0] != best
+                ]
+            return ordered[:max(1, min(5, int(multipv)))]
         except Exception as exc:  # noqa: BLE001
             global _connect_error, _available, _proc
             _connect_error = f"{type(exc).__name__}: {exc}"
@@ -167,7 +187,18 @@ def best_move_pikafish(
                 except Exception:
                     pass
             _proc = None
-            return None
+            return []
+
+
+def best_move_pikafish(
+    fen: str,
+    *,
+    depth: int = 18,
+    movetime_ms: int | None = None,
+) -> str | None:
+    """同步问引擎最佳着法；失败返回 None。"""
+    candidates = candidate_moves_pikafish(fen, depth=depth, movetime_ms=movetime_ms)
+    return candidates[0][0] if candidates else None
 
 
 def close_pikafish() -> None:

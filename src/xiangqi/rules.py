@@ -299,6 +299,53 @@ def legal_targets(board, turn: str, fr: int, fc: int) -> list[tuple[int, int]]:
     return out
 
 
+def has_legal_recapture(board, capture: Move, attacker: str) -> bool:
+    """吃子后，原被吃方能否合法回吃落点（保护而非仅仅看住）。"""
+    piece, captured = apply_raw(board, capture)
+    try:
+        defender = "black" if attacker == "red" else "red"
+        for r in range(10):
+            for c in range(9):
+                if color_of(board[r][c]) == defender and is_legal(
+                    board, Move(r, c, capture.tr, capture.tc), defender
+                ):
+                    return True
+        return False
+    finally:
+        undo_raw(board, capture, piece, captured)
+
+
+def unprotected_capture_targets(board, turn: str, moves: list[Move]) -> list[tuple[int, int]]:
+    """能吃且对方不能合法回吃的目标；保护中的棋子不标圈。"""
+    enemy = "black" if turn == "red" else "red"
+    return sorted({
+        (mv.tr, mv.tc)
+        for mv in moves
+        if color_of(board[mv.tr][mv.tc]) == enemy
+        and board[mv.tr][mv.tc].lower() != "k"
+        and not has_legal_recapture(board, mv, turn)
+    })
+
+
+def move_lands_under_capture(board, move: Move, turn: str) -> bool:
+    """走完后能否被对方吃掉，且己方无法合法回吃。"""
+    piece, captured = apply_raw(board, move)
+    try:
+        if piece.lower() == "k":
+            return False
+        enemy = "black" if turn == "red" else "red"
+        for r in range(10):
+            for c in range(9):
+                if color_of(board[r][c]) != enemy:
+                    continue
+                reply = Move(r, c, move.tr, move.tc)
+                if is_legal(board, reply, enemy) and not has_legal_recapture(board, reply, enemy):
+                    return True
+        return False
+    finally:
+        undo_raw(board, move, piece, captured)
+
+
 def hanging_captures(board, turn: str) -> list[tuple[int, int]]:
     """当前方能吃到、且对方未保护的敌子坐标（不含将/帅）。"""
     enemy = "black" if turn == "red" else "red"
@@ -377,6 +424,7 @@ class XiangqiGame:
         self.reset(fen)
 
     def reset(self, fen: str = START_FEN):
+        self.revision = getattr(self, "revision", 0) + 1
         self.board, self.turn, self.halfmove, self.fullmove = parse_fen(fen)
         self.history: list[dict] = []
         self.result: str | None = None
@@ -390,8 +438,16 @@ class XiangqiGame:
 
     def snapshot(self) -> dict:
         moves = legal_moves(self.board, self.turn) if not self.result else []
-        hanging = hanging_captures(self.board, self.turn) if not self.result else []
-        threatened = hanging_own(self.board, self.turn) if not self.result else []
+        enemy = "black" if self.turn == "red" else "red"
+        enemy_moves = legal_moves(self.board, enemy) if not self.result else []
+        own_captures = unprotected_capture_targets(self.board, self.turn, moves)
+        enemy_captures = unprotected_capture_targets(self.board, enemy, enemy_moves)
+        red_captures = own_captures if self.turn == "red" else enemy_captures
+        black_captures = enemy_captures if self.turn == "red" else own_captures
+        # 保留旧字段供其他客户端使用；新提示始终按棋盘下方的执棋方取值。
+        hanging = own_captures
+        threatened = enemy_captures
+        risky_uci = [m.uci for m in moves if move_lands_under_capture(self.board, m, self.turn)]
         return {
             "fen": self.fen(),
             "turn": self.turn,
@@ -403,6 +459,17 @@ class XiangqiGame:
             "legal_uci": [m.uci for m in moves],
             "hanging": [[r, c] for r, c in hanging],
             "threatened": [[r, c] for r, c in threatened],
+            "threat_hints": {
+                "red": {
+                    "capturable": [[r, c] for r, c in red_captures],
+                    "threatened": [[r, c] for r, c in black_captures],
+                },
+                "black": {
+                    "capturable": [[r, c] for r, c in black_captures],
+                    "threatened": [[r, c] for r, c in red_captures],
+                },
+            },
+            "risky_uci": risky_uci,
             "board": deepcopy(self.board),
         }
 
@@ -444,6 +511,7 @@ class XiangqiGame:
         entry["gave_check"] = in_check(self.board, self.turn)
         entry["fen"] = self.fen()
         self.history.append(entry)
+        self.revision += 1
         self._refresh_result()
         return entry
 
@@ -463,6 +531,7 @@ class XiangqiGame:
         elif self.turn == "black" and self.fullmove > 1:
             self.fullmove -= 1
         self.result = None
+        self.revision += 1
         self._refresh_result()
         return last
 

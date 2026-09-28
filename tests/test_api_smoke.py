@@ -48,7 +48,7 @@ def test_health():
     assert "llm_enabled" in body
     assert "llm_model" in body
     assert "active" in (body.get("session_pool") or {})
-    assert "active" in (body.get("room_pool") or {})
+    assert "room_pool" not in body
     assert body.get("variants") == ["chess", "xiangqi"]
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
     assert "default-src" in (r.headers.get("Content-Security-Policy") or "")
@@ -75,10 +75,13 @@ def test_pwa_precaches_current_app_bundle():
     sw = (root / "frontend" / "chess" / "sw.js").read_text(encoding="utf-8")
     html = "\n".join(
         (root / "frontend" / "chess" / name).read_text(encoding="utf-8")
-        for name in ("index.html", "learn.html", "online.html", "tools.html")
+        for name in ("index.html", "learn.html", "tools.html")
     )
-    assert "app.js?v=mapp19" in html
-    assert "'/chess/app.js?v=mapp19'" in sw
+    assert "app.js?v=mapp25" in html
+    assert "'/chess/app.js?v=mapp25'" in sw
+    learn = (root / "frontend" / "chess" / "learn.html").read_text(encoding="utf-8")
+    assert 'data-learn="mistakes"' in learn
+    assert 'id="mistake-list"' in learn
     assert (root / "frontend" / "xiangqi" / "index.html").is_file()
     assert (root / "frontend" / "shared" / "variant-switch.js").is_file()
     assert 'const API = \'/api/xiangqi\'' in (root / "frontend" / "xiangqi" / "app.js").read_text(
@@ -100,6 +103,26 @@ def test_chess_prefix_aliases_legacy_api():
     )
     assert legacy.status_code == 200
     assert prefixed.status_code == 200
+
+
+def test_removed_online_endpoints_and_pages():
+    for prefix in ("/api", "/api/chess", "/api/xiangqi"):
+        assert client.post(f"{prefix}/rooms", json={"name": "test"}).status_code == 404
+    for variant in ("chess", "xiangqi"):
+        assert client.get(f"/{variant}/online.html").status_code == 404
+
+
+def test_fen_import_free_play_does_not_wait_for_previous_ai_controller():
+    headers = _headers("smoke_fen_free_play")
+    client.post("/api/chess/game/new", json={"mode": "human_vs_ai", "human_color": "white"}, headers=headers)
+    fen = "rnbqkbnr/pppp2pp/5p2/4N3/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 0 3"
+    loaded = client.post("/api/chess/game/load-fen", json={"fen": fen, "free_play": True}, headers=headers)
+    assert loaded.status_code == 200
+    assert loaded.json()["mode"] == "human_vs_human"
+    assert loaded.json()["controller"] == "human"
+    moved = client.post("/api/chess/game/move", json={"uci": "f6e5", "with_analysis": False}, headers=headers)
+    assert moved.status_code == 200
+    assert moved.json()["move"]["uci"] == "f6e5"
 
 
 def test_xiangqi_health_and_move():
@@ -275,8 +298,9 @@ def test_visitor_and_openapi_core_paths():
 
     spec = client.get("/openapi.json").json()
     paths = spec.get("paths") or {}
-    for p in ("/api/health", "/api/visitor", "/api/game/new", "/api/games", "/api/rooms"):
+    for p in ("/api/health", "/api/visitor", "/api/game/new", "/api/games"):
         assert p in paths, p
+    assert not any("/rooms" in path for path in paths)
     assert spec.get("info", {}).get("title")
 
 

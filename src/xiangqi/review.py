@@ -88,25 +88,32 @@ def build_review(game: XiangqiGame) -> dict[str, Any]:
         color = move.get("color") or "red"
         # 红方物质增加为正；黑方走子时黑受益 = 红物质下降，故黑方 delta_for_mover = -delta
         delta_for_mover = delta if color == "red" else -delta
-        cls = _classify_delta(delta_for_mover, move.get("captured"), bool(move.get("gave_check")))
+        cls = move.get("classification") or _classify_delta(
+            delta_for_mover, move.get("captured"), bool(move.get("gave_check"))
+        )
         class_scores[color].append(cls)
-        red_win = float(ev.get("red_pct") or 50)
+        red_win = float(ev["red_pct"] if ev.get("red_pct") is not None else 50)
         point = {
             "ply": i,
             "san": move.get("san") or move.get("uci") or "—",
             "red_win": red_win,
-            "black_win": float(ev.get("black_pct") or (100 - red_win)),
+            "black_win": float(ev["black_pct"] if ev.get("black_pct") is not None else (100 - red_win)),
             "advantage": round(red_win - 50.0, 1),
             "classification": cls,
             "fen": fen_after,
             "color": color,
         }
         curve.append(point)
-        if cls in {"brilliant", "great", "mistake", "blunder"} or move.get("gave_check"):
+        if cls in {"brilliant", "great", "inaccuracy", "mistake", "blunder"} or move.get("gave_check"):
             highlights.append(
                 {
                     "number": i,
                     "san": point["san"],
+                    "uci": move.get("uci"),
+                    "fen_before": move.get("fen_before") or (curve[-2].get("fen") if len(curve) > 1 else start_fen),
+                    "fen_after": fen_after,
+                    "from": move.get("from"),
+                    "to": move.get("to"),
                     "classification": cls,
                     "color": "红" if color == "red" else "黑",
                     "note": "将军" if move.get("gave_check") else "",
@@ -173,6 +180,10 @@ def build_review(game: XiangqiGame) -> dict[str, Any]:
         "avg_disagreement": 0.0,
         "narrative": narrative,
         "highlights": highlights[:12],
+        "mistakes": [
+            h for h in highlights
+            if h.get("classification") in {"inaccuracy", "mistake", "blunder"}
+        ],
         "debates": [],
         "eval_curve": _thin_curve(curve),
         "accuracy": {

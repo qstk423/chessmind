@@ -202,6 +202,80 @@ def _pick_agent(game: XiangqiGame, persona: str, depth_hint: int = 1) -> dict[st
     }
 
 
+def evaluate_played_move(game: XiangqiGame, uci: str) -> dict[str, Any]:
+    """优先用 Pikafish 比较实战着与最佳候选，供错题本收录。"""
+    from src.xiangqi.engine import candidate_moves_pikafish
+
+    engine_candidates = candidate_moves_pikafish(
+        game.fen(), depth=10, movetime_ms=240, multipv=5
+    )
+    if engine_candidates and engine_candidates[0][1] is not None:
+        best_uci, best_score = engine_candidates[0]
+        chosen_score = next(
+            (score for move, score in engine_candidates if move == uci and score is not None),
+            None,
+        )
+        if chosen_score is None:
+            clone = deepcopy(game)
+            try:
+                clone.play_uci(uci)
+                reply = candidate_moves_pikafish(
+                    clone.fen(), depth=10, movetime_ms=240, multipv=1
+                )
+                if reply and reply[0][1] is not None:
+                    chosen_score = -int(reply[0][1])
+            except ValueError:
+                chosen_score = None
+        if chosen_score is not None:
+            loss = max(0, int(best_score) - int(chosen_score))
+            if loss >= 300:
+                classification = "blunder"
+            elif loss >= 150:
+                classification = "mistake"
+            elif loss >= 120:
+                classification = "inaccuracy"
+            else:
+                classification = "good"
+            best_move = next((m for m in legal_moves(game.board, game.turn) if m.uci == best_uci), None)
+            return {
+                "classification": classification,
+                "score_loss": loss,
+                "recommended_uci": best_uci,
+                "recommended_san": move_san(game.board, best_move) if best_move else best_uci,
+                "played_uci": uci,
+                "engine": "pikafish",
+            }
+
+    # 引擎不可用时仍给出确定性的轻量降级判定。
+    moves = legal_moves(game.board, game.turn)
+    ranked: list[tuple[int, Move]] = []
+    for move in moves:
+        score, _ = _score_move(game, move, "coach")
+        ranked.append((score, move))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    chosen = next((item for item in ranked if item[1].uci == uci), None)
+    if not ranked or chosen is None:
+        return {"classification": "good", "score_loss": 0}
+    best_score, best_move = ranked[0]
+    chosen_score = chosen[0]
+    loss = max(0, best_score - chosen_score)
+    if loss >= 1400:
+        classification = "blunder"
+    elif loss >= 900:
+        classification = "mistake"
+    elif loss >= 600:
+        classification = "inaccuracy"
+    else:
+        classification = "good"
+    return {
+        "classification": classification,
+        "score_loss": loss,
+        "recommended_uci": best_move.uci,
+        "recommended_san": move_san(game.board, best_move),
+        "played_uci": uci,
+    }
+
+
 def _find_king(board, color: str) -> tuple[int, int] | None:
     target = "K" if color == "red" else "k"
     for r in range(10):

@@ -24,7 +24,14 @@ from src.guardrails import is_admin, require_admin, require_owner_id
 from src.library.catalog import list_library
 from src.llm_logger import recent_logs
 from src.sessions import orchestrator, pool
-from src.storage import adopt_orphan_games, delete_game, get_game, list_games
+from src.storage import (
+    adopt_orphan_games,
+    delete_game,
+    get_game,
+    get_mistake,
+    list_games,
+    list_mistakes,
+)
 from src.visitor import mint_owner_id, owner_signing_enabled
 
 router = APIRouter()
@@ -56,10 +63,16 @@ class AiStepRequest(BaseModel):
 
 class FenRequest(BaseModel):
     fen: str
+    free_play: bool = False
 
 
 class AnalyzePositionRequest(BaseModel):
     with_analysis: bool = True
+
+
+class AnalyzePlyRequest(BaseModel):
+    ply: int = Field(ge=1)
+    analysis_mode: Literal["fast", "deep"] | None = None
 
 
 class FenSquareRequest(BaseModel):
@@ -195,7 +208,7 @@ def load_fen(
     response: Response,
     x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ):
-    state = _orch(request, response, x_session_id).load_fen(req.fen)
+    state = _orch(request, response, x_session_id).load_fen(req.fen, free_play=req.free_play)
     if "error" in state:
         raise HTTPException(status_code=400, detail=state)
     return {"status": "ok", **state}
@@ -214,6 +227,21 @@ async def analyze_position(
     result = await orch.analyze_position(with_analysis=with_analysis)
     if result.get("stale"):
         raise HTTPException(status_code=409, detail=result["error"])
+    return result
+
+
+@router.post("/game/analyze-ply")
+async def analyze_ply(
+    request: Request,
+    req: AnalyzePlyRequest,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    result = await _orch(request, response, x_session_id).analyze_ply(
+        req.ply, analysis_mode=req.analysis_mode
+    )
+    if "error" in result:
+        raise HTTPException(status_code=409 if result.get("stale") else 400, detail=result["error"])
     return result
 
 
@@ -264,6 +292,30 @@ def game_review(
 ):
     """赛后复盘报告（基于本局逐步 Council 缓存）。"""
     return _orch(request, response, x_session_id).get_review()
+
+
+@router.get("/mistakes")
+def mistake_book():
+    """本机错题本：按严重程度与最近出现时间排序。"""
+    return {"variant": "chess", "items": list_mistakes("chess")}
+
+
+@router.post("/mistakes/{mistake_id}/load")
+def load_mistake(
+    mistake_id: str,
+    request: Request,
+    response: Response,
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    item = get_mistake(mistake_id)
+    if not item or item.get("variant") != "chess":
+        raise HTTPException(status_code=404, detail="错题不存在")
+    state = _orch(request, response, x_session_id).load_fen(
+        item["fen_before"], free_play=True
+    )
+    if "error" in state:
+        raise HTTPException(status_code=400, detail=state)
+    return {"status": "ok", "mistake": item, **state}
 
 
 @router.post("/game/save")
@@ -527,8 +579,6 @@ async def health(
     request: Request,
     ping_llm: bool = Query(False, description="是否实际 ping 一次大模型"),
 ):
-    from src.rooms import room_manager
-
     if ping_llm:
         require_admin(request)
         return await orchestrator.health()
@@ -554,7 +604,6 @@ async def health(
         "sessions": "header",
         "owner_signing": owner_signing_enabled(),
         "session_pool": pool.stats(),
-        "room_pool": room_manager.stats(),
     }
 
 

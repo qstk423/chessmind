@@ -1,0 +1,107 @@
+/* A brief, full-screen check announcement; the board stays interactive beneath it. */
+.check-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at center, rgba(202, 164, 87, 0.22), transparent 47%),
+    rgba(7, 19, 15, 0.86);
+  backdrop-filter: blur(4px);
+  --check-accent: #e2bc70;
+  --check-glow: rgba(226, 188, 112, 0.5);
+}
+.check-flash[hidden] { display: none !important; }
+.check-flash--xiangqi {
+  background:
+    radial-gradient(circle at center, rgba(192, 82, 62, 0.3), transparent 47%),
+    rgba(27, 12, 10, 0.88);
+  --check-accent: #f0c984;
+  --check-glow: rgba(224, 114, 85, 0.55);
+}
+.check-flash::before,
+.check-flash::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(76vmin, 650px);
+  aspect-ratio: 1;
+  border: 2px solid var(--check-accent);
+  border-radius: 50%;
+  box-shadow: 0 0 45px var(--check-glow), inset 0 0 35px var(--check-glow);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.45);
+}
+.check-flash::after {
+  width: min(108vmin, 920px);
+  border-width: 1px;
+}
+.check-flash__beam {
+  position: absolute;
+  inset: -35% auto -35% 50%;
+  width: min(32vw, 340px);
+  background: linear-gradient(90deg, transparent, var(--check-glow), transparent);
+  opacity: 0;
+  transform: translateX(-120vw) skewX(-20deg);
+}
+.check-flash__text {
+  position: relative;
+  z-index: 1;
+  max-width: calc(100vw - 32px);
+  color: #fff3d9;
+  font-family: var(--font-display, "Noto Serif SC", serif);
+  font-size: clamp(3.5rem, 12vw, 8rem);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-align: center;
+  text-shadow: 0 5px 0 rgba(74, 34, 21, 0.65), 0 0 50px var(--check-glow);
+  opacity: 0;
+  transform: scale(1.5);
+}
+.check-flash.is-visible { animation: check-screen 1300ms ease both; }
+.check-flash.is-visible::before { animation: check-ring 1100ms ease-out 90ms both; }
+.check-flash.is-visible::after { animation: check-ring 1150ms ease-out 160ms both; }
+.check-flash.is-visible .check-flash__beam { animation: check-beam 1050ms ease-out 110ms both; }
+.check-flash.is-visible .check-flash__text {
+  animation: check-title 1250ms cubic-bezier(0.2, 1, 0.3, 1) both;
+}
+@keyframes check-screen {
+  0% { opacity: 0; }
+  12%, 73% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes check-ring {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.45); }
+  28% { opacity: 0.58; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.2); }
+}
+@keyframes check-beam {
+  0% { opacity: 0; transform: translateX(-120vw) skewX(-20deg); }
+  40% { opacity: 0.6; }
+  100% { opacity: 0; transform: translateX(100vw) skewX(-20deg); }
+}
+@keyframes check-title {
+  0%, 12% { opacity: 0; transform: scale(1.5); }
+  30% { opacity: 1; transform: scale(1); }
+  72% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.95); }
+}
+@media (max-width: 600px) {
+  .check-flash__text { font-size: clamp(3.25rem, 13vw, 5.5rem); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .check-flash { backdrop-filter: none; }
+  .check-flash::before,
+  .check-flash::after,
+  .check-flash__beam { display: none; }
+  .check-flash.is-visible .check-flash__text {
+    animation: check-screen 1300ms ease both;
+    transform: none;
+  }
+}

@@ -1,4 +1,4 @@
-"""谜题、会话、联机回归。"""
+"""谜题与会话回归。"""
 from __future__ import annotations
 
 from fastapi import Request
@@ -101,18 +101,6 @@ def test_session_isolation():
     assert sa["fen"] != sb["fen"]
 
 
-def test_room_invite_join_and_full():
-    create = client.post("/api/xiangqi/rooms", json={"name": "红方", "color": "red"})
-    assert create.status_code == 200
-    room = create.json()["room_id"]
-    join = client.post(f"/api/xiangqi/rooms/{room}/join", json={"name": "黑方"})
-    assert join.status_code == 200
-    assert join.json()["color"] == "black"
-    assert join.json().get("token")
-    third = client.post(f"/api/xiangqi/rooms/{room}/join", json={"name": "旁观"})
-    assert third.status_code == 409
-
-
 def test_challenge_load_sets_puzzle_check_path():
     h = {"X-Session-Id": "xq-challenge-1"}
     pid = "mate_rook_a0d0"
@@ -145,7 +133,7 @@ def test_health_headers_and_pools():
     assert r.status_code == 200
     body = r.json()
     assert body["session_pool"]["active"] >= 1
-    assert "active" in body["room_pool"]
+    assert "room_pool" not in body
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
     assert "default-src" in (r.headers.get("Content-Security-Policy") or "")
     assert r.headers.get("X-Frame-Options") == "SAMEORIGIN"

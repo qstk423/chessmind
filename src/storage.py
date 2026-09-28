@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -51,7 +52,144 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_games_owner_updated ON games(owner_id, updated_at DESC)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mistakes (
+                id TEXT PRIMARY KEY,
+                variant TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                classification TEXT NOT NULL,
+                fen_before TEXT NOT NULL,
+                fen_after TEXT,
+                played_uci TEXT NOT NULL,
+                played_san TEXT,
+                recommended_uci TEXT,
+                recommended_san TEXT,
+                coach TEXT,
+                side TEXT,
+                ply INTEGER,
+                score_loss REAL,
+                repeat_count INTEGER NOT NULL DEFAULT 1
+            )
+            """
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mistakes_position_move "
+            "ON mistakes(variant, fen_before, played_uci)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mistakes_variant_updated "
+            "ON mistakes(variant, updated_at DESC)"
+        )
         conn.commit()
+
+
+def upsert_mistake(
+    *,
+    variant: str,
+    classification: str,
+    fen_before: str,
+    fen_after: str | None,
+    played_uci: str,
+    played_san: str | None = None,
+    recommended_uci: str | None = None,
+    recommended_san: str | None = None,
+    coach: str | None = None,
+    side: str | None = None,
+    ply: int | None = None,
+    score_loss: float | None = None,
+) -> dict[str, Any]:
+    """保存差招；同一局面重复犯同一错误时累计次数。"""
+    if classification not in {"inaccuracy", "mistake", "blunder"}:
+        return {}
+    init_db()
+    now = datetime.now(timezone.utc).isoformat()
+    key = f"{variant}\n{fen_before}\n{played_uci}".encode("utf-8")
+    mistake_id = hashlib.sha256(key).hexdigest()[:24]
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT repeat_count FROM mistakes WHERE id = ?", (mistake_id,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE mistakes
+                SET updated_at = ?, classification = ?, fen_after = ?, played_san = ?,
+                    recommended_uci = COALESCE(?, recommended_uci),
+                    recommended_san = COALESCE(?, recommended_san),
+                    coach = COALESCE(?, coach), side = COALESCE(?, side),
+                    ply = COALESCE(?, ply), score_loss = COALESCE(?, score_loss),
+                    repeat_count = repeat_count + 1
+                WHERE id = ?
+                """,
+                (
+                    now,
+                    classification,
+                    fen_after,
+                    played_san,
+                    recommended_uci,
+                    recommended_san,
+                    coach,
+                    side,
+                    ply,
+                    score_loss,
+                    mistake_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO mistakes (
+                    id, variant, created_at, updated_at, classification,
+                    fen_before, fen_after, played_uci, played_san,
+                    recommended_uci, recommended_san, coach, side, ply,
+                    score_loss, repeat_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                """,
+                (
+                    mistake_id,
+                    variant,
+                    now,
+                    now,
+                    classification,
+                    fen_before,
+                    fen_after,
+                    played_uci,
+                    played_san,
+                    recommended_uci,
+                    recommended_san,
+                    coach,
+                    side,
+                    ply,
+                    score_loss,
+                ),
+            )
+        conn.commit()
+    return get_mistake(mistake_id) or {"id": mistake_id}
+
+
+def list_mistakes(variant: str, limit: int = 200) -> list[dict[str, Any]]:
+    init_db()
+    severity = "CASE classification WHEN 'blunder' THEN 3 WHEN 'mistake' THEN 2 ELSE 1 END"
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM mistakes
+            WHERE variant = ?
+            ORDER BY {severity} DESC, updated_at DESC
+            LIMIT ?
+            """,
+            (variant, max(1, min(500, int(limit)))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_mistake(mistake_id: str) -> dict[str, Any] | None:
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM mistakes WHERE id = ?", (mistake_id,)).fetchone()
+    return dict(row) if row else None
 
 
 def upsert_game(
